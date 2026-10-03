@@ -1,0 +1,59 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Node / TypeScript
+node_modules/
+dist/
+*.log
+.turbo
+build/
+.next/
+
+# Go
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Secrets & Environment
+.env
+!.env.sample
+*.local
+.env.*.local
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+.gemini/
+.agents/
+
+# DB
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Binar
+gowave*
+backend-go/gowave*
+backend-go/remnawave-server*
+backend-go/server-linux-*
+backend-go/sazan
+remnawave-server*
+
+remnanode*
+node-go/remnanode*
+
+# Separate / excluded components
+backend-ts/
+node-ts/
+node-go/
+openapi.json

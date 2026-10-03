@@ -1,0 +1,17 @@
+.root {
+    background: rgba(255, 255, 255, 0.02);
+    animation: fadeIn 200ms linear both;
+}
+
+.root[data-with-border='true'] {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}

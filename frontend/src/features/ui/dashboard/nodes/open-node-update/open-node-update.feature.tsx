@@ -1,0 +1,31 @@
+import { ActionIcon, Tooltip } from '@mantine/core'
+import { GetNodeCommand } from '@remnawave/backend-contract'
+import { memo } from 'react'
+import { TbCloudDownload } from 'react-icons/tb'
+
+import { showModal } from '@shared/_modals/show-modal'
+
+interface IProps {
+    node: GetNodeCommand.Response['response']
+}
+
+const OpenNodeUpdateFeatureComponent = (props: IProps) => {
+    const { node } = props
+
+    return (
+        <Tooltip label="Обновить Remnanode">
+            <ActionIcon
+                color="blue"
+                onClick={() => {
+                    showModal('nodes_updateNodeModal', { node })
+                }}
+                size="lg"
+                variant="soft"
+            >
+                <TbCloudDownload size={22} />
+            </ActionIcon>
+        </Tooltip>
+    )
+}
+
+export const OpenNodeUpdateFeature = memo(OpenNodeUpdateFeatureComponent)

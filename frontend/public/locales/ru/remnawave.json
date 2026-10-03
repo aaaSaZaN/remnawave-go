@@ -1,0 +1,1906 @@
+{
+  "constants": {
+    "home": "Главная",
+    "hosts": "Хосты",
+    "nodes": "Ноды",
+    "nodes-statistics": "Статистика",
+    "nodes-metrics": "Метрики",
+    "users": "Пользователи",
+    "overview": "Обзор",
+    "management": "Управление",
+    "subscription-settings": "Настройки",
+    "templates": "Шаблоны",
+    "subscription": "Подписка",
+    "subscription-page": "Subscription Page",
+    "config-profiles": "Профили",
+    "internal-squads": "Внутренние сквады",
+    "external-squads": "Внешние сквады",
+    "infra-billing": "Инфра-биллинг",
+    "hwid-inspector": "Инспектор HWID",
+    "tools": "Инструменты",
+    "srh-inspector": "Инспектор SRH",
+    "response-rules": "Правила ответов",
+    "remnawave-settings": "Настройки Remnawave",
+    "node-plugins": "Плагины",
+    "quick-open": "Быстрый переход",
+    "tb-reports": "Отчёты Torrent Blocker",
+    "sessions-explorer": "Обозреватель сессий",
+    "http-stats": "Статистика HTTP",
+    "quick-launcher": "Лаунчер"
+  },
+  "common": {
+    "action": {
+      "actions": "Действия",
+      "add": "Добавить",
+      "add-users": "Добавить пользователей",
+      "bulk-actions": "Массовые действия",
+      "bulk-edit": "Массовое редактирование",
+      "cancel": "Отмена",
+      "change": "Сменить",
+      "clear": "Очистить",
+      "clear-selection": "Снять выделение",
+      "clone": "Клонировать",
+      "close": "Закрыть",
+      "confirm-action": "Подтвердите действие",
+      "continue": "Продолжить",
+      "copy": "Копировать",
+      "copy-link": "Копировать ссылку",
+      "copy-uuid": "Копировать UUID",
+      "create": "Создать",
+      "delete": "Удалить",
+      "disable": "Выключить",
+      "documentation": "Документация",
+      "download": "Скачать",
+      "edit": "Изменить",
+      "enable": "Включить",
+      "load-from-github": "Загрузить с GitHub",
+      "more-actions": "Ещё действия",
+      "next": "Далее",
+      "open": "Открыть",
+      "paste": "Вставить",
+      "paste-default": "Вставить значение по умолчанию",
+      "refresh": "Обновить",
+      "remove": "Убрать",
+      "remove-users": "Убрать пользователей",
+      "rename": "Переименовать",
+      "reset": "Сбросить",
+      "reset-traffic": "Сбросить трафик",
+      "save": "Сохранить",
+      "search": "Поиск",
+      "select": "Выбрать",
+      "select-all": "Выбрать все",
+      "try-again": "Повторить",
+      "update": "Обновить",
+      "view": "Просмотр"
+    },
+    "field": {
+      "active-sessions": "Активные сессии",
+      "address": "Адрес",
+      "all": "Все",
+      "billing-node": "Биллинговая нода",
+      "color": "Цвет",
+      "created-at": "Создано",
+      "creation": "Создание",
+      "description": "Описание",
+      "first-connected-at": "Первое подключение",
+      "inbounds": "Инбаунды",
+      "inbounds-hosts": "Инбаунды и хосты",
+      "interface": "Интерфейс",
+      "internal-squads": "Внутренние сквады",
+      "ip-address": "IP-адрес",
+      "ip-addresses": "IP-адреса",
+      "logo-url": "Ссылка на логотип",
+      "name": "Название",
+      "os-version": "Версия ОС",
+      "password": "Пароль",
+      "platform": "Платформа",
+      "port": "Порт",
+      "request-at": "Время запроса",
+      "shared-lists": "Общие списки",
+      "status": "Статус",
+      "subscription-request-history": "История запросов подписки",
+      "subscription-url": "Ссылка на подписку",
+      "svg-icon": "SVG-иконка",
+      "system": "Система",
+      "tag": "Тег",
+      "tags": "Теги",
+      "untagged": "Без тега",
+      "today": "Сегодня",
+      "total": "Всего",
+      "total-traffic": "Всего трафика",
+      "updated-at": "Обновлено",
+      "usage-stats": "Статистика использования",
+      "user-agent": "User-Agent",
+      "user-status": "Статус пользователя",
+      "username": "Юзернейм"
+    },
+    "message": {
+      "click-to-see-all": "Нажмите, чтобы увидеть все",
+      "configured": "Настроено",
+      "confirm-action-description": "Вы уверены, что хотите выполнить это действие? Отменить его будет нельзя.",
+      "copied": "Скопировано",
+      "error": "Ошибка",
+      "event-sent": "Событие отправлено",
+      "invalid-json": "Некорректный JSON",
+      "last-error-message": "Последняя ошибка",
+      "loading": "Загрузка",
+      "no-config-profiles-available": "Нет доступных профилей",
+      "no-data-available": "Нет данных",
+      "no-data-available-for-the-selected-period": "За выбранный период данных нет",
+      "no-inbound-selected": "Инбаунд не выбран",
+      "no-profile-selected": "Профиль не выбран",
+      "no-profiles-or-inbounds-found": "Профили и инбаунды не найдены",
+      "not-set": "Не задано",
+      "nothing-found": "Ничего не найдено",
+      "operation-completed": "Операция завершена",
+      "overdue": "Просрочено",
+      "processing": "Обработка",
+      "search-profiles-or-inbounds": "Поиск профилей и инбаундов...",
+      "selected": "Выбрано: {{count}}",
+      "success": "Готово",
+      "warning": "Внимание"
+    }
+  },
+  "bandwidth-metrics": {
+    "current-year": "Текущий год",
+    "from-last-year": "к прошлому году",
+    "calendar-month": "Календарный месяц",
+    "last-30-days": "Последние 30 дней",
+    "from-last-month": "к прошлому месяцу",
+    "last-7-days": "Последние 7 дней",
+    "from-last-week": "к прошлой неделе",
+    "from-yesterday": "ко вчера"
+  },
+  "online-metrics": {
+    "never-online": "Ни разу не были онлайн",
+    "online-this-week": "Онлайн на этой неделе",
+    "online-today": "Онлайн сегодня",
+    "online-now": "Онлайн сейчас"
+  },
+  "simple-metrics": {
+    "ram-usage": "Использование RAM",
+    "total-online-on-nodes": "Всего онлайн на нодах"
+  },
+  "config-editor-actions": {
+    "feature": {
+      "format": "Форматировать",
+      "failed-to-save-invalid-json": "Не сохранено: некорректный JSON.",
+      "save-anyway": "Всё равно сохранить",
+      "save-anyway-description": "Точно сохранить некорректный конфиг Xray? Это может привести к непредсказуемому поведению. Продолжайте, только если понимаете, что делаете.",
+      "tools": "Инструменты",
+      "copy-all-content": "Скопировать всё",
+      "cut-selection": "Вырезать выделенное",
+      "paste-from-clipboard": "Вставить из буфера",
+      "generate-keypair": "Сгенерировать пару ключей"
+    }
+  },
+  "action-group": {
+    "feature": {
+      "reset-table": "Сбросить таблицу",
+      "clear-filters": "Сбросить фильтры"
+    }
+  },
+  "use-table-columns": {
+    "last-connected-node": "Последняя нода",
+    "expire-at": "Истекает",
+    "data-usage": "Израсходовано",
+    "sub-link": "Ссылка подписки",
+    "traffic-reset": "Сброс трафика",
+    "never": "Никогда",
+    "online-at": "Был онлайн",
+    "lifetime-used": "Израсходовано за всё время",
+    "sub-link-revoked-at": "Ссылка отозвана",
+    "created-at": "Создан",
+    "internal-squads": "Внутренние сквады",
+    "used-traffic": "Израсходовано трафика (%)"
+  },
+  "header-buttons": {
+    "feature": {}
+  },
+  "header-action-buttons": {
+    "feature": {
+      "update-external-squads": "Обновить внешние сквады",
+      "external-squad-name": "Название внешнего сквада",
+      "update-templates": "Обновить шаблоны",
+      "template-name": "Название шаблона"
+    }
+  },
+  "nodes-header-action-buttons": {
+    "feature": {
+      "restart-all-nodes": "Перезапустить все ноды",
+      "search-nodes": "Поиск нод",
+      "force-restart-description": "Гарантирует, что все ноды полностью перезапустят Xray Core.",
+      "graceful-restart-description-1": "Отправляет всем нодам запрос на перезапуск Xray, но запрос может остаться без ответа, если хеш ноды совпадает с текущим. Вариант по умолчанию.",
+      "force": "Жёстко",
+      "graceful": "Мягко"
+    }
+  },
+  "config-editor": {
+    "widget": {
+      "unsaved-changes": "Несохранённые изменения",
+      "your-changes-will-be-lost-if-you-leave-this-page-without-saving": "Если уйти со страницы, не сохранившись, изменения потеряются.",
+      "leave": "Уйти",
+      "stay": "Остаться"
+    }
+  },
+  "keypair": {
+    "widget": {
+      "generate-key-pair": "Сгенерировать пару ключей",
+      "both-keys": "Оба ключа"
+    }
+  },
+  "create-host-modal": {
+    "widget": {
+      "new-host": "Новый хост",
+      "please-select-the-config-profile-and-inbound": "Выберите профиль и инбаунд"
+    }
+  },
+  "edit-host-modal": {
+    "widget": {
+      "edit-host": "Изменить хост",
+      "dangling-host-cannot-be-cloned": "Осиротевший хост нельзя клонировать"
+    }
+  },
+  "create-node-modal": {
+    "widget": {
+      "create-node": "Создать ноду",
+      "back": "Назад",
+      "connection-successful": "Подключение установлено",
+      "connection-failed": "Подключиться не удалось",
+      "open-node": "Открыть ноду"
+    }
+  },
+  "edit-node-modal": {
+    "widget": {
+      "edit-node": "Изменить ноду"
+    }
+  },
+  "node-status-badge": {
+    "widget": {
+      "connected": "подключена",
+      "connecting": "подключается",
+      "disabled": "выключена",
+      "disconnected": "отключена"
+    }
+  },
+  "create-user-modal": {
+    "widget": {
+      "user-description": "Описание пользователя",
+      "expiry-date": "Дата окончания",
+      "pick-value": "Выберите значение",
+      "traffic-reset-strategy": "Стратегия сброса трафика",
+      "traffic-reset-strategy-description": "Как часто обнулять статистику трафика пользователя",
+      "username-cannot-be-changed-later": "Юзернейм потом не изменить",
+      "create-user": "Создать пользователя",
+      "1-month": "+1 месяц",
+      "3-months": "+3 месяца",
+      "1-year": "+1 год",
+      "2099-year": "до 2099 года",
+      "hwid-user-limit-description": "Работает, только если включён <highlight>Подписка → Настройки (лимит HWID)</highlight>. <anchor>Подробнее</anchor>.",
+      "disable-hwid-limit": "Отключить лимит HWID",
+      "hwid-device-limit": "Лимит устройств HWID",
+      "expire-at-description": "Дата и время, когда подписка пользователя закончится.",
+      "internal-squads-description": "Укажите, в каких внутренних сквадах будет состоять пользователь."
+    }
+  },
+  "home-page": {},
+  "user-table": {
+    "widget": {
+      "error-loading-data": "Не удалось загрузить данные",
+      "table-title": "Пользователи"
+    }
+  },
+  "view-user-modal": {
+    "widget": {
+      "subscription-qr-code": "QR-код подписки",
+      "edit-user-headline": "Изменить пользователя",
+      "subscription-url-description-line-1": "Домен и путь берутся из переменной .env:",
+      "subscription-url-description-line-2": "Чтобы изменить, поправьте .env и перезапустите Remnawave командой:",
+      "management": "Управление",
+      "danger-zone": "Опасная зона",
+      "detailed-info": "Подробности",
+      "accessible-nodes": "Доступные ноды",
+      "qr-code": "QR-код"
+    }
+  },
+  "base-host-form": {
+    "remark": "Примечание",
+    "host": "Host",
+    "path": "Путь",
+    "fingerprint": "Отпечаток",
+    "security-layer": "Security Layer",
+    "tls-transport-layer-security": "TLS (Transport Layer Security)",
+    "none": "Нет",
+    "inbounds-default": "Как в инбаунде",
+    "extra-xhttp": "XHTTP extra",
+    "xhttp-extra-params": "Доп. параметры XHTTP",
+    "address-description-line-1": "Адрес должен быть IP-адресом или доменным именем, указывающим на точку назначения.",
+    "address-description-line-2": "Обычно он должен указывать на одну из подключённых нод.",
+    "port-description-line-1": "Порт подключения.",
+    "port-description-line-2": "Обычно должен совпадать с портом выбранного инбаунда.",
+    "sni-description-line-1": "SNI расшифровывается как Server Name Indication.",
+    "sni-description-line-2": "Если не указан, будет использовано значение из инбаунда конфига.",
+    "host-visibility": "Видимость хоста",
+    "server-description-header": "Описание сервера",
+    "server-description-placeholder": "Не больше 30 символов",
+    "group-security": "Безопасность",
+    "group-transport": "Транспорт",
+    "group-subscription": "Подписка",
+    "group-client": "Для отдельных клиентов",
+    "group-advanced": "Расширенные",
+    "hide-host": "Скрыть хост",
+    "single-domain": "Один домен",
+    "default-mode-for-one-domain": "Режим по умолчанию для одного домена",
+    "multi-domain": "Несколько доменов",
+    "multi-domain-description": "Несколько доменов через запятую. Remnawave будет выбирать один из них случайным образом.",
+    "wildcard-domain": "Wildcard-домен",
+    "wildcard-domain-description": "Wildcard-шаблон для поддоменов. Remnawave подставит вместо * случайную строку.",
+    "override-sni-from-address": "Брать SNI из адреса",
+    "override-sni-from-address-description": "Подставляет в SNI значение поля «Адрес». Особенно полезно для конфигураций с несколькими доменами или wildcard-доменом.",
+    "shuffled-hosts-hover-card": "Перемешанные хосты встанут в начало списка и будут отсортированы случайным образом.",
+    "vless-route-description": "От 1 до 65535, 0 или пусто — выключено",
+    "shuffle-host": "Перемешивать хост",
+    "enable-x25519mlkem768": "Включить x25519mlkem768",
+    "pick-nodes-which-resolved-from-this-host-only-visual-assignment": "Выберите ноды, на которые указывает этот хост. Влияет только на отображение.",
+    "nodes": "Ноды",
+    "select-a-xray-json-template": "Выберите шаблон Xray JSON",
+    "xray-json-template": "Шаблон Xray JSON",
+    "vital-parameters": "Основные параметры",
+    "exclude-this-host-from-specific-internal-squads": "Исключить этот хост из выбранных внутренних сквадов",
+    "excluded-internal-squads": "Исключённые внутренние сквады",
+    "keep-sni-blank": "Оставить SNI пустым",
+    "keep-sni-blank-description": "Иногда SNI нужно оставить пустым. Эта опция принудительно очищает его. У неё наивысший приоритет, поэтому она сработает, даже если SNI уже задан.",
+    "exclude-from-subscription-type": "Исключить из типа подписки",
+    "hidden-host-description": "По умолчанию Remnawave не включает скрытые хосты в подписку. Скрытые хосты работают с Mihomo, Xray-Json Advanced и Raw.",
+    "server-description-1": "В поддерживаемых клиентах название протокола (например, vless) заменится на указанное здесь описание.",
+    "server-description-2": "Эту возможность поддерживают не все клиенты. Подробности — в документации приложений из списка ниже.",
+    "supported-clients": "Поддерживаемые клиенты",
+    "mapper": "Маппер",
+    "internal-squads-mode-exclude": "Исключить",
+    "internal-squads-mode-allow-only": "Только разрешённые",
+    "allowed-internal-squads": "Разрешённые внутренние сквады",
+    "allow-this-host-only-for-specific-internal-squads": "Показывать этот хост только выбранным внутренним сквадам",
+    "group-assignment": "Назначение",
+    "access-mode": "Режим доступа",
+    "override-type": "Тип переопределения",
+    "sni": "SNI",
+    "alpn": "ALPN",
+    "vless-route-id": "Vless route ID",
+    "mux-params": "MUX",
+    "sockopt-params": "SockOpt",
+    "final-mask-params": "Final mask",
+    "pinned-peer-cert-sha256": "Pinned peer certificate",
+    "verify-peer-cert-by-name": "Verify peer certificate by name",
+    "mihomo-x25519": "Mihomo X25519",
+    "mihomo-ip-version": "Версия IP для Mihomo",
+    "no-options-title": "Больше ничего не настроено",
+    "no-options-description": "Хост собирается из своего инбаунда и основных параметров выше. Добавьте опцию, чтобы изменить, как он генерируется и до кого доходит.",
+    "no-bulk-options-title": "Изменений пока нет",
+    "no-bulk-options-description": "Каждая добавленная опция применится ко всем выбранным хостам. Оставьте её пустой, чтобы очистить это поле у всех.",
+    "bulk-option-will-be-cleared": "Будет очищено у всех выбранных хостов.",
+    "leave-field-untouched": "Не трогать это поле",
+    "options": "Опции"
+  },
+  "base-node-form": {
+    "country": "Страна",
+    "select-country": "Выберите страну",
+    "internal-name": "Внутреннее название",
+    "internal-name-placeholder": "напр. US-NY-Node-01",
+    "e-g-example-com": "напр. example.com",
+    "traffic-tracking": "Отслеживание трафика",
+    "limit": "Лимит",
+    "reset-day": "День сброса",
+    "e-g-1-31": "напр. 1-31",
+    "notify-percent": "Уведомлять при %",
+    "e-g-50": "напр. 50",
+    "consumption-m-line-1": "Применяет выбранный множитель к трафику пользователя (1.0 = обычный, 0.5 = половина, 2.0 = двойной).",
+    "consumption-m-line-2": "Проще говоря: если лимит трафика пользователя 1 ГиБ, а множитель 2.0, реально он потратит только 0.5 ГиБ, но Remnawave покажет расход в 1 ГиБ и пользователь уйдёт в LIMITED.",
+    "node-vitals": "Основное",
+    "consumption": "Расход",
+    "core-configuration": "Конфигурация ядра",
+    "tracking-and-billing": "Учёт и биллинг",
+    "management": "Управление"
+  },
+  "home": {
+    "page": {
+      "online-stats": "Статистика онлайна",
+      "bandwidth": "Трафик",
+      "remnawave-usage": "Нагрузка Remnawave",
+      "process-details": "Подробности процесса"
+    },
+    "runtime-info": {
+      "title": "Гид по метрикам рантайма",
+      "subtitle": "Что на самом деле означает каждое число на карточке процесса",
+      "intro": "Каждая карточка показывает живой срез одного <highlight>процесса Remnawave</highlight>. Этот гид объясняет, что измеряет каждая метрика и когда стоит беспокоиться.",
+      "instance-types-title": "Типы процессов",
+      "instance-types-description": "Remnawave разделён на несколько специализированных процессов. У каждого своя задача, своя память и свой event loop.",
+      "api-description": "Обрабатывает все HTTP-запросы от дашборда и эндпоинтов подписки. Это <highlight>основной процесс, с которым работают пользователи</highlight> — практически каждый запрос панели и подписки обслуживается здесь.",
+      "scheduler-description": "<highlight>Диспетчер по расписанию</highlight>. Сам он ничего не выполняет — в назначенный момент просто кладёт задачу в очередь, откуда её заберёт <highlight>Processor</highlight>.",
+      "processor-description": "Собственно <highlight>воркер</highlight>. Разбирает очередь и делает тяжёлую работу: <highlight>проверки состояния нод</highlight>, <highlight>агрегацию трафика</highlight> по пользователям и нодам и другие долгие задачи, которые нельзя вешать на API.",
+      "memory-description": "Где процесс держит рабочие данные. Все значения Node.js отдаёт в реальном времени.",
+      "heap-description": "Память под объекты JavaScript, которой управляет <highlight>V8</highlight> — движок Node.js. Показано как <highlight>занято / всего</highlight>. Высокое соотношение — это <highlight>норма, а не проблема</highlight>: V8 удерживает память, пока ему действительно не понадобится больше, так что что-то вроде <highlight>100 / 120 МБ</highlight> — нормально.",
+      "rss-description": "<highlight>Resident Set Size</highlight> — вся физическая память, которую ОС выдала процессу, включая кучу, нативный код и разделяемые библиотеки. Лучший одиночный показатель того, <highlight>сколько оперативки процесс реально занимает</highlight>.",
+      "external-description": "Память вне V8, которую держат нативные C++-объекты, связанные с JavaScript — обычно это <highlight>открытые сокеты</highlight>, <highlight>потоки</highlight> и данные в Buffer.",
+      "array-buffers-description": "Память, выделенная именно под <highlight>ArrayBuffer</highlight> и <highlight>Buffer</highlight> (сырые бинарные данные). Считается частью <highlight>External</highlight>.",
+      "event-loop-description": "Состояние однопоточного цикла, который крутит всю асинхронную работу в Node.js. Если цикл заблокирован, встаёт весь процесс.",
+      "delay-description": "Среднее время между соседними тиками event loop. Здоровое значение держится около <highlight>0–2 мс</highlight>. Больше — значит цикл блокирует долгая синхронная работа.",
+      "p99-description": "<highlight>99-й перцентиль</highlight> задержки event loop за окно измерения. Показывает худшие случаи, которые среднее прячет — удобно, чтобы ловить редкие всплески.",
+      "active-handles-description": "Долгоживущие ресурсы, удерживающие цикл: <highlight>открытые сокеты</highlight>, <highlight>таймеры</highlight>, <highlight>файловые дескрипторы</highlight>. Стабильное значение — норма; <highlight>безостановочный рост</highlight> — верный признак утечки."
+    }
+  },
+  "login-form": {
+    "feature": {
+      "sign-in": "Войти",
+      "your-password": "Ваш пароль"
+    }
+  },
+  "statistic-nodes": {
+    "component": {
+      "current-month": "Текущий месяц",
+      "7-days": "7 дней",
+      "14-days": "14 дней",
+      "30-days": "30 дней",
+      "60-days": "60 дней",
+      "90-days": "90 дней",
+      "180-days": "180 дней",
+      "total-traffic": "Всего трафика",
+      "total-traffic-placeholder": "Всего трафика: {{totalTraffic}}",
+      "top-nodes": "Топ нод",
+      "node": "Нода",
+      "traffic": "Трафик",
+      "3-days": "3 дня"
+    }
+  },
+  "get-expiration-text": {
+    "util": {
+      "expires-in": "Истекает через {{expiration}}",
+      "expired": "Истекла {{expiration}}",
+      "unknown": "Неизвестно"
+    }
+  },
+  "reset-data": {
+    "constants": {
+      "reset-monthly": "Раз в месяц",
+      "reset-weekly": "Раз в неделю",
+      "reset-daily": "Раз в день",
+      "never-reset": "Не сбрасывать",
+      "reset-monthly-by-creation-date": "Раз в месяц (от даты создания)"
+    }
+  },
+  "data-usage": {
+    "column": {
+      "monthly": "За месяц",
+      "weekly": "За неделю",
+      "daily": "За день"
+    }
+  },
+  "get-time-ago": {
+    "util": {
+      "invalid-date": "Некорректная дата",
+      "not-connected-yet": "Ещё не подключался"
+    }
+  },
+  "bulk-user-actions-modal": {
+    "widget": {
+      "user-deletion-description": "Удаляет всех пользователей с выбранным статусом. Если удаляете пользователей со статусом «Active», перезапустите все ноды, чтобы изменения применились.",
+      "select-status": "Удалить по статусу"
+    }
+  },
+  "register-form": {
+    "feature": {
+      "generate": "Сгенерировать и скопировать",
+      "confirm-password": "Повторите пароль",
+      "sign-up": "Зарегистрироваться",
+      "password-copied": "Пароль скопирован",
+      "password-copied-message": "Пароль скопирован в буфер обмена",
+      "password-copied-error": "Не удалось скопировать пароль в буфер обмена",
+      "passwords-do-not-match": "Пароли не совпадают",
+      "password-too-short": "Минимум 24 символа",
+      "register-description": "Создайте аккаунт супер-админа, чтобы начать",
+      "registration": "Регистрация"
+    }
+  },
+  "remarks-manager": {
+    "widget": {
+      "enter-remark": "Введите примечание"
+    }
+  },
+  "subscription-settings": {
+    "widget": {
+      "validation-error": "Ошибка валидации",
+      "main-settings": "Основные настройки",
+      "you-must-add-at-least-one-remark-with-text": "Добавьте хотя бы одно примечание с текстом",
+      "user-status-remarks-description": "Эти значения будут показаны на странице подписки, если пользователь истёк, ограничен или отключён.",
+      "user-status-remarks-description-line-2": "Для каждого статуса можно добавить несколько примечаний.",
+      "serve-json-at-base-subscription": "Отдавать JSON на базовом пути подписки",
+      "serve-json-description": "Отдавать JSON-конфигурации по базовому пути подписки, без добавления /json. Если клиент это поддерживает, он получит JSON; если нет — всё как обычно.",
+      "custom-remarks": "Свои примечания"
+    }
+  },
+  "multi-select-hosts": {
+    "feature": {
+      "dangling-hosts-skipped": "Осиротевших хостов пропущено и не клонировано: {{count}}."
+    }
+  },
+  "edit-many-hosts-drawer": {
+    "confirm-title": "Подтвердите массовое изменение",
+    "confirm-description": "Эти поля будут обновлены у хостов в количестве {{count}}:",
+    "no-changes-title": "Нечего обновлять",
+    "no-changes-description": "Вы не изменили ни одного поля."
+  },
+  "delete-all-users-by-status": {
+    "feature": {
+      "deleting-users": "Удаляем пользователей..."
+    }
+  },
+  "bulk-all-user-actions-tabs": {
+    "update": {
+      "tab": {
+        "feature": {
+          "select-status": "Выберите статус",
+          "update-users": "Обновить пользователей"
+        }
+      }
+    },
+    "actions": {
+      "tab": {
+        "feature": {
+          "reset-traffic-description": "Обнуляет израсходованный трафик у всех выбранных пользователей"
+        }
+      }
+    },
+    "danger": {
+      "tab": {
+        "feature": {
+          "delete-users-by-status": "Удалить пользователей по статусу",
+          "delete-users-by-status-description": "Безвозвратно удаляет всех пользователей с выбранным статусом"
+        }
+      }
+    }
+  },
+  "bulk-user-actions": {
+    "actions": {
+      "tab": {
+        "feature": {
+          "revoke-subscription": "Отозвать подписку",
+          "perform-action-on-users": "Действия над выбранными пользователями: {{usersCount}}",
+          "revokes-subscription-for-all-selected-users": "Отзывает подписку у всех выбранных пользователей",
+          "specify-internal-squads-that-will-be-assigned-to-the-user": "Укажите внутренние сквады, которые будут назначены пользователю",
+          "extend-expiration-date": "Продлить дату окончания",
+          "enter-the-number-of-days-to-extend-the-expiration-date": "Укажите, на сколько дней продлить дату окончания",
+          "extend-days": "Дней",
+          "extend": "Продлить",
+          "extend-expiration-date-description": "Добавляет дни к дате окончания у выбранных пользователей. Дни прибавляются к текущей дате окончания каждого."
+        }
+      }
+    },
+    "danger": {
+      "tab": {
+        "feature": {
+          "delete-users": "Удалить пользователей",
+          "permanently-deletes-all-selected-users-and-their-data": "Безвозвратно удаляет всех выбранных пользователей и их данные"
+        }
+      }
+    }
+  },
+  "get-user-subscription-links": {
+    "feature": {
+      "connection-keys": "Ключи подключения"
+    }
+  },
+  "active-sessions-drawer": {
+    "widget": {
+      "requirements": "Требования",
+      "warning-activity": "IP-адрес показывается, пока <highlight>Xray Core</highlight> считает <highlight>соединение открытым</highlight>. Из-за этого часть показанных адресов может быть уже отключена. Отслеживайте последнюю активность конкретного IP по иконке <highlight>часов</highlight>.",
+      "warning-version": "Remnawave Node версии <highlight>{{version}}</highlight> или выше",
+      "warning-docker": "Добавьте следующее в <highlight>docker-compose.yml</highlight> ноды Remnawave (/opt/remnanode)",
+      "warning-patience": "Сбор данных может занять время, не закрывайте это окно!",
+      "warning-n-plus-one": "<highlight>Обратите внимание</highlight>: запрос делает <highlight>N+1</highlight> обращений к gRPC API <highlight>Xray Core</highlight>, потому что метода для пакетной выдачи там нет. <highlight>N</highlight> — число пользователей, которые сейчас онлайн на этой ноде.",
+      "fetching": "Собираем активные сессии...",
+      "progress": "Обработано нод: {{completed}} из {{total}}",
+      "job-failed-description": "Не удалось собрать активные сессии.",
+      "active-ips-across-nodes": "Активные IP-адреса",
+      "distinct-ips": "Уникальных IP"
+    }
+  },
+  "detailed-user-info-drawer": {
+    "widget": {
+      "detailed-user-info": "Подробно о пользователе",
+      "user-information": "О пользователе",
+      "short-uuid": "Короткий UUID",
+      "email": "Email",
+      "telegram-id": "Telegram ID",
+      "traffic-information": "О трафике",
+      "used-traffic": "Израсходовано трафика",
+      "lifetime-used-traffic": "Израсходовано за всё время",
+      "traffic-limit": "Лимит трафика",
+      "traffic-limit-strategy": "Стратегия лимита трафика",
+      "last-traffic-reset": "Последний сброс трафика",
+      "subscription-information": "О подписке",
+      "expires-at": "Истекает",
+      "revoked-at": "Отозвана",
+      "connection-information": "О подключении",
+      "trojan-password": "Пароль Trojan",
+      "ss-password": "Пароль SS",
+      "last-online": "Последний онлайн",
+      "last-connected-node": "Последняя нода",
+      "timestamps": "Даты",
+      "active-internal-squads": "Активные внутренние сквады"
+    }
+  },
+  "subscription-tabs": {
+    "widget": {
+      "show-custom-remarks": "Показывать свои примечания",
+      "show-custom-remark-description-line-2": "Если настройка выключена, пользователи со статусами EXPIRED, LIMITED и DISABLED получат по-настоящему пустой список хостов.",
+      "additional-response-headers": "Заголовки ответа",
+      "headers-that-will-be-sent-with-subscription-content": "Заголовки, которые уйдут вместе с содержимым подписки.",
+      "randomize-hosts": "Перемешивать хосты",
+      "randomize-hosts-description": "Перемешивать хосты в содержимом подписки",
+      "additional-options": "Дополнительные настройки",
+      "configure-additional-subscription-options": "Дополнительные настройки подписки"
+    }
+  },
+  "nodes-realtime-metrics": {
+    "widget": {
+      "download-speed": "Скорость скачивания",
+      "upload-speed": "Скорость отдачи"
+    }
+  },
+  "internal-squads-usage-drawer": {
+    "info": {
+      "title": "Как считается расход",
+      "summary": "Возвращает участников внутреннего сквада, потративших не меньше заданного порога за выбранный период, с <b>суммарным объёмом</b> по каждому.",
+      "nodes-title": "Какие ноды учитываются",
+      "nodes-intro": "Сквад не привязан к нодам напрямую — связь выводится через инбаунды:",
+      "nodes-step-1": "Берутся все инбаунды, входящие во внутренний сквад.",
+      "nodes-step-2": "Для каждого инбаунда определяются профили, которым он принадлежит.",
+      "nodes-step-3": "Нода учитывается, если такой профиль выставлен у неё <b>активным</b> и этот инбаунд на самой ноде включён.",
+      "nodes-outro": "То есть учитываются только те ноды, к которым участник сквада <hl>реально может подключиться прямо сейчас</hl>. Если ни на одной ноде нет доступного инбаунда сквада, список будет пуст.",
+      "traffic-title": "Как считается трафик",
+      "traffic-granularity": "Статистика хранится с точностью до <b>суток</b>: одна запись = пользователь + нода + день. Данные с нод сбрасываются в базу примерно <hl>раз в 2 минуты</hl>, поэтому сегодняшние цифры почти в реальном времени, с отставанием до пары минут.",
+      "traffic-sum": "По каждому участнику суммируются все его посуточные записи по нодам за период с начала <code>start</code> до конца <code>end</code> (обе даты включительно, UTC).",
+      "traffic-threshold": "В ответ попадают только пользователи, у которых сумма <b>≥ minTotalBytes</b>. Объём отдаётся в <hl>сырых байтах</hl>, без округления.",
+      "caveats-title": "Что важно помнить",
+      "caveats-per-node": "Трафик считается <b>по ноде целиком</b>, а не по инбаунду. Если нода общая для нескольких сквадов (её активный профиль обслуживает и другие инбаунды), в сумму пользователя войдёт весь его трафик на этой ноде — включая тот, что он пролил через инбаунды других сквадов. Это <hl>оценка сверху</hl>, а не точное отнесение к сквадам.",
+      "caveats-membership": "Состав сквада и набор нод берутся <b>на момент запроса</b>, а не исторически. Ушедший из сквада пользователь пропадает из ответа, даже если трафик тратил; недавно вступивший показывает весь свой трафик за период, включая дни до вступления. То же самое со сменой активного профиля ноды.",
+      "caveats-sorting": "Список отсортирован по <b>ID пользователя</b>, а не по объёму. Трафик меняется в реальном времени, поэтому данные между страницами могут разъезжаться — чтобы отловить злоупотребляющих, задайте порог <code>minTotalBytes</code>, а не вычитывайте всех подряд."
+    }
+  },
+  "get-hwid-user-devices": {
+    "feature": {
+      "unknown": "Неизвестно",
+      "model": "Модель",
+      "added": "Добавлено",
+      "delete-device": "Удалить устройство",
+      "devices": "Устройства",
+      "hwid-devices": "Устройства HWID",
+      "delete-all-devices": "Удалить все устройства"
+    }
+  },
+  "headers-manager": {
+    "widget": {
+      "key": "Ключ",
+      "value": "Значение",
+      "add-header": "Добавить заголовок"
+    }
+  },
+  "template-selector": {
+    "search-templates": "Поиск шаблонов...",
+    "official-templates": "Официальные шаблоны",
+    "author-templates": "Шаблоны {{author}}",
+    "modal": {
+      "load-template": "Загрузить шаблон"
+    },
+    "add-template": "Добавить шаблон"
+  },
+  "use-download-template": {
+    "failed-to-load-template": "Не удалось загрузить шаблон",
+    "template-loaded": "Шаблон загружен",
+    "template-name-has-been-loaded-into-the-editor": "{{name}} загружен в редактор",
+    "load-failed": "Загрузка не удалась",
+    "failed-to-load-template-please-try-again": "Не удалось загрузить шаблон. Попробуйте ещё раз.",
+    "select-template-to-load": "Выберите шаблон для загрузки"
+  },
+  "pm2-metrics": {
+    "total-processes": "Всего процессов",
+    "total-memory": "Всего памяти"
+  },
+  "internal-squads-grid": {
+    "widget": {
+      "no-internal-squads": "Внутренних сквадов нет",
+      "create-your-first-internal-squad-to-get-started": "Создайте первый внутренний сквад, чтобы начать",
+      "delete-squad": "Удалить сквад",
+      "users": "Пользователи"
+    }
+  },
+  "config-profiles-grid": {
+    "widget": {
+      "no-config-profiles": "Профилей нет",
+      "create-your-first-config-profile-to-get-started": "Создайте первый профиль, чтобы начать",
+      "delete-profile": "Удалить профиль",
+      "nodes": "Ноды",
+      "quick-view": "Быстрый просмотр",
+      "xray-config": "Конфиг. Xray"
+    }
+  },
+  "view-infra-provider": {
+    "drawer": {
+      "widget": {
+        "infra-provider": "Провайдер",
+        "name-description": "Название провайдера. По нему провайдер отображается в интерфейсе.",
+        "enter-provider-name": "Введите название провайдера",
+        "favicon-link": "Ссылка на фавикон",
+        "enter-favicon-link": "Введите ссылку на фавикон",
+        "favicon-link-description": "Ссылка на фавикон провайдера, он показывается в интерфейсе. Можно указать просто домен.",
+        "login-url": "Ссылка на вход",
+        "enter-login-url": "Введите ссылку на вход",
+        "login-url-description": "Ссылка на страницу входа провайдера. Позволяет перейти туда сразу."
+      }
+    }
+  },
+  "update-billing-date-modal": {
+    "widget": {
+      "update-billing-date": "Изменить дату списания",
+      "current-date": "Текущая дата",
+      "new-date": "Новая дата",
+      "tomorrow": "Завтра",
+      "next-month": "В следующем месяце"
+    }
+  },
+  "infra-providers-table": {
+    "widget": {
+      "no-providers-found": "Провайдеры не найдены."
+    }
+  },
+  "infra-billing-records-table": {
+    "widget": {
+      "no-billing-records-found": "Записей о списаниях не найдено."
+    }
+  },
+  "infra-billing-nodes": {
+    "widget": {
+      "no-nodes-found": "Ноды не найдены.",
+      "add-a-node": "Добавить ноду",
+      "update-multiple-nodes": "Обновить несколько нод"
+    }
+  },
+  "create-infra-billing-record": {
+    "modal": {
+      "widget": {
+        "please-select-a-provider": "Выберите провайдера",
+        "bill-record": "Запись о списании",
+        "billed-at": "Дата списания",
+        "the-date-and-time-when-the-bill-was-paid": "Дата и время, когда счёт был оплачен.",
+        "payment-amount-usd": "Сумма платежа, USD",
+        "amount": "Сумма"
+      }
+    }
+  },
+  "create-infra-billing-node": {
+    "modal": {
+      "widget": {
+        "please-select-a-provider-and-billing-node": "Выберите провайдера и биллинговую ноду",
+        "next-billing-at": "Следующее списание",
+        "next-billing-at-description": "Дата и время следующего списания по этой ноде. Remnawave напомнит о нём заранее.",
+        "existing": "Существующая",
+        "custom": "Своя",
+        "custom-name-description": "Укажите своё название, если нода не управляется Remnawave."
+      }
+    }
+  },
+  "active-nodes-list": {
+    "modal": {
+      "shared": {
+        "this-profile-is-not-active-on-any-nodes": "Этот профиль не активен ни на одной ноде"
+      }
+    }
+  },
+  "config-profile-card": {
+    "shared": {
+      "active-on-nodes": "Активен на нодах"
+    },
+    "widget": {
+      "loading-computed-config-profile": "Собираем итоговый профиль...",
+      "computed-config-profile-loaded-successfully": "Итоговый профиль собран",
+      "the-computed-config-profile-description": "Итоговый профиль показывает конфигурацию после применения всех сниппетов.",
+      "view-computed": "Посмотреть итоговый"
+    }
+  },
+  "flat-inbound-checkbox-card": {
+    "shared": {
+      "inbound-config-inbound-tag": "Конфиг инбаунда: {{inboundTag}}"
+    }
+  },
+  "virtualized-flat-inbounds-list": {
+    "shared": {
+      "no-inbounds-found": "Инбаунды не найдены"
+    }
+  },
+  "select-billing-node": {
+    "shared": {
+      "no-billing-nodes-available": "Нет доступных биллинговых нод",
+      "select-the-billing-node": "Выберите биллинговую ноду.",
+      "select-billing-node": "Выберите биллинговую ноду..."
+    }
+  },
+  "select-infra-provider": {
+    "shared": {
+      "infrastructure-provider": "Провайдер",
+      "no-providers-available": "Нет доступных провайдеров",
+      "select-the-infrastructure-provider": "Выберите провайдера.",
+      "select-provider": "Выберите провайдера..."
+    }
+  },
+  "internal-squads-list": {
+    "widget": {
+      "search-internal-squads": "Поиск внутренних сквадов...",
+      "no-squads-found": "Сквады не найдены"
+    }
+  },
+  "user-accessible-nodes": {
+    "modal": {
+      "widget": {
+        "user-accessible-nodes": "Ноды, доступные пользователю"
+      }
+    }
+  },
+  "internal-squads": {
+    "drawer": {
+      "widget": {
+        "config-profiles": "Профили",
+        "flat-list": "Плоский список",
+        "selected": "Выбранные",
+        "unselected": "Невыбранные",
+        "edit-internal-squad": "Изменить внутренний сквад",
+        "selected-inbounds": "Выбрано инбаундов: {{count}}"
+      }
+    }
+  },
+  "host-select-inbound": {
+    "feature": {
+      "choose-an-inbound-to-apply-to-the-host": "Выберите инбаунд для этого хоста"
+    }
+  },
+  "show-config-profiles-with-inbounds": {
+    "feature": {
+      "no-config-profile-selected": "Профиль не выбран",
+      "choose-a-profile-to-configure-inbounds-for-this-node": "Выберите профиль, чтобы настроить инбаунды этой ноды"
+    }
+  },
+  "access-settings-card": {
+    "access-settings": "Настройки доступа",
+    "select-an-external-squad-to-apply-custom-settings-to-this-user": "Выберите внешний сквад, чтобы применить к этому пользователю особые настройки.",
+    "external-squad": "Внешний сквад",
+    "select-an-external-squad": "Выберите внешний сквад..."
+  },
+  "device-tag-settings-card": {
+    "device-and-tag-settings": "Устройства и теги"
+  },
+  "user-identity-creation-card": {
+    "user-identity": "Данные пользователя"
+  },
+  "hosts-config-profiles": {
+    "drawer": {
+      "widget": {
+        "unknown-inbound": "Неизвестный инбаунд",
+        "assign-an-inbound-to-the-host": "Назначьте хосту инбаунд"
+      }
+    }
+  },
+  "stats": {
+    "widget": {
+      "upcoming-in": "Предстоит в {{month}}",
+      "nodes-pending-payment": "нод ждут оплаты",
+      "payments-in": "Платежи в {{month}}",
+      "total-payments-made": "платежей проведено",
+      "total-spent": "Всего потрачено",
+      "lifetime-spending": "за всё время",
+      "payment-overdue": "платёж просрочен",
+      "all-up-to-date": "всё оплачено"
+    }
+  },
+  "disclaimer-overlay": {
+    "title": "Отказ от ответственности",
+    "subtitle": "Прочитайте это, прежде чем продолжить.",
+    "intro": "Remnawave — это <highlight>открытый, self-hosted</highlight> инструмент для проксирования и управления пользователями. Он предоставляется <warning>«как есть», без каких-либо гарантий</warning>, явных или подразумеваемых.",
+    "responsibility": "Вы <highlight>несёте полную ответственность</highlight> за то, как разворачиваете и используете эту программу.",
+    "compliance": "Вы обязаны соблюдать <highlight>все законы и нормы</highlight>, действующие в вашей юрисдикции.",
+    "liability": "Разработчики и контрибьюторы <warning>не несут ответственности</warning> за неправомерное использование, ущерб или потерю данных.",
+    "license-acknowledgement": "Продолжая, вы подтверждаете, что прочитали и принимаете <anchor>условия лицензии</anchor>.",
+    "accept-button": "Понимаю и принимаю"
+  },
+  "connection-status-overlay": {
+    "connection-lost": "Соединение потеряно",
+    "reconnecting": "Переподключаемся..."
+  },
+  "mobile-warning-overlay": {
+    "mobile-device-detected": "Обнаружено мобильное устройство",
+    "description-line-1": "На этой странице сложные таблицы, с которыми на мобильном может быть неудобно.",
+    "description-line-2": "Вот чем можно управлять таблицей на мобильных устройствах.",
+    "show-or-hide-columns": "Показать или скрыть колонки",
+    "adjust-row-spacing-density": "Настроить плотность строк",
+    "toggle-fullscreen-table-view": "Развернуть таблицу на весь экран",
+    "desktop-recommended": "Рекомендуем десктоп",
+    "or": "или",
+    "rotate-device": "Поверните устройство",
+    "i-understand-continue-anyway": "Понимаю, всё равно продолжить"
+  },
+  "internal-squad-header-action-buttons": {
+    "feature": {
+      "squad-name": "Название сквада",
+      "enter-squad-name": "Введите название сквада"
+    }
+  },
+  "config-profiles-header-action-buttons": {
+    "feature": {
+      "create-a-new-config-profile-by-entering-a-name-below": "Введите название ниже, чтобы создать новый профиль.",
+      "you-can-customize-xray-config-after-creation": "Настроить конфиг Xray можно после создания.",
+      "profile-name": "Название профиля",
+      "enter-profile-name": "Введите название профиля"
+    }
+  },
+  "restart-node-button": {
+    "feature": {
+      "restart": "Перезапустить",
+      "restart-description-line-1": "Гарантирует, что нода полностью перезапустит Xray Core. Рекомендуемый вариант.",
+      "restart-description-line-2": "Отправляет ноде запрос на перезапуск Xray, но запрос может остаться без ответа, если хеш ноды совпадает с текущим."
+    }
+  },
+  "node-details-card": {
+    "show-zero-values": "Показать нулевые значения",
+    "hide-zero-values": "Скрыть нулевые значения",
+    "no-inbound-traffic-data": "Нет данных по входящему трафику",
+    "no-outbound-traffic-data": "Нет данных по исходящему трафику",
+    "widget": {
+      "node-details": "Подробности",
+      "enable-node": "Включить ноду",
+      "disable-node": "Выключить ноду",
+      "config-profile-or-inbounds-is-missing": "Не задан профиль или инбаунды",
+      "xray-core-version": "Версия Xray Core",
+      "remnawave-node-version": "Версия ноды, @remnawave/node"
+    }
+  },
+  "config-profiles": {
+    "drawer": {
+      "widget": {
+        "config-profiles": "Профили",
+        "no-inbounds-selected": "Инбаунды не выбраны"
+      }
+    }
+  },
+  "node-system-card": {
+    "widget": {
+      "system-info": "О системе",
+      "memory": "Память",
+      "network": "Сеть",
+      "kernel": "Ядро"
+    }
+  },
+  "node-stats": {
+    "card": {
+      "traffic-refill-in-days": "Пополнение трафика через (дней):",
+      "represents-the-uptime-of-the-xray-core": "Показывает аптайм Xray Core"
+    }
+  },
+  "host-tags-input": {
+    "tags-are-not-visible-to-end-users-tag-will-be-sent-with-raw-subscription-only": "Теги не видны конечным пользователям. Тег уходит только с подпиской RAW."
+  },
+  "internal-squad-accessible-nodes": {
+    "modal": {
+      "widget": {
+        "internal-squad-accessible-nodes": "Ноды, доступные внутреннему скваду"
+      }
+    }
+  },
+  "config-profile-inbounds": {
+    "drawer": {
+      "widget": {
+        "fetching-inbounds": "Загружаем инбаунды...",
+        "inbounds-with-active-squads": "Инбаунды с активными сквадами"
+      }
+    }
+  },
+  "get-user-subscription-request-history": {
+    "feature": {
+      "request-history": "История запросов"
+    }
+  },
+  "use-hwid-inspector-table-columns": {
+    "device-model": "Модель устройства"
+  },
+  "hwid-inspector-table": {
+    "widget": {
+      "hwid-devices-list": "Список устройств HWID"
+    }
+  },
+  "hwid-inspector-metrics": {
+    "widget": {
+      "total-unique-devices": "Всего уникальных устройств",
+      "total-hwid-devices": "Всего устройств HWID",
+      "avg-devices-per-user": "В среднем устройств на пользователя",
+      "platform-distribution": "Распределение по платформам",
+      "app-distribution": "Распределение по приложениям",
+      "no-platform-data": "Нет данных по платформам",
+      "no-app-data": "Нет данных по приложениям"
+    }
+  },
+  "use-srh-inspector-table-columns": {
+    "request-ip": "IP запроса",
+    "response-type": "Тип ответа",
+    "rule-name": "Название правила"
+  },
+  "srh-inspector-metrics": {
+    "widget": {
+      "requests": "Запросы",
+      "hourly-request-statistics": "Статистика запросов по часам",
+      "no-hourly-data-available": "Нет почасовых данных"
+    }
+  },
+  "linked-hosts-drawer": {
+    "widget": {
+      "assigned-hosts": "Назначенные хосты",
+      "no-hosts-assigned-to-this-node": "Этой ноде не назначен ни один хост"
+    }
+  },
+  "get-node-linked-hosts": {
+    "feature": {
+      "linked-hosts": "Связанные хосты"
+    }
+  },
+  "snippets": {
+    "drawer": {
+      "widget": {
+        "snippet-cannot-be-empty": "Сниппет не может быть пустым",
+        "snippet-cannot-contain-empty-objects": "В сниппете не может быть пустых объектов",
+        "more-items": "ещё...",
+        "create-snippet": "Создать сниппет",
+        "snippet-name": "Название сниппета",
+        "enter-snippet-name-cannot-be-changed-later": "Введите название сниппета (потом не изменить)",
+        "snippet-is-valid": "Сниппет корректен",
+        "edit-snippet": "Изменить сниппет",
+        "snippets": "Сниппеты",
+        "new-snippet": "Новый сниппет"
+      }
+    }
+  },
+  "response-rules-editor-actions": {
+    "feature": {
+      "response-rules-debugger": "Отладчик правил ответов",
+      "response-rules-debugger-description-1": "Этой командой cURL можно проверить, как правила ответов срабатывают на разные заголовки запроса.",
+      "response-rules-debugger-description-2": "Её можно импортировать в:",
+      "or": ", или",
+      "curl-command": "Команда cURL",
+      "copy-curl-command": "Скопировать команду cURL",
+      "debugger": "Отладчик"
+    }
+  },
+  "copy-docker-compose": {
+    "widget": {
+      "copy-docker-compose-yml": "Скопировать docker-compose.yml"
+    }
+  },
+  "create-node-step-1-connection": {
+    "copy-the": "Скопируйте содержимое",
+    "content-for-the-remnawave-node-below": "для ноды Remnawave ниже.",
+    "learn-more": "Подробнее.",
+    "domain-or-ip": "Домен или IP",
+    "additional-options": "Дополнительные настройки"
+  },
+  "create-node-step-3-status": {
+    "establishing-mtls-connection": "Устанавливаем mTLS-соединение...",
+    "xray-core-is-up-and-running": "Xray Core запущен и работает!",
+    "remnawave-will-try-to-reconnect-shortly": "Remnawave скоро попробует переподключиться...",
+    "no-errors-so-far": "Ошибок пока нет"
+  },
+  "external-squad-card": {
+    "widget": {
+      "users": "Пользователи"
+    }
+  },
+  "internal-squads-with-store": {
+    "drawer": {
+      "widget": {
+        "users": "Пользователи"
+      }
+    }
+  },
+  "external-squads": {
+    "drawer": {
+      "widget": {
+        "subscription-templates": "Шаблоны подписки",
+        "subscription-templates-description-line-1": "Выберите по одному шаблону на каждый тип подписки. Если не выбрать, будет использован шаблон по умолчанию.",
+        "subscription-templates-description-line-2": "Учтите, что правила ответов имеют более высокий приоритет.",
+        "select-a-template": "Выберите шаблон",
+        "default-template-in-use": "Используется шаблон по умолчанию...",
+        "edit-external-squad": "Изменить внешний сквад",
+        "templates": "Шаблоны",
+        "settings": "Настройки",
+        "remarks": "Примечания"
+      }
+    }
+  },
+  "external-squads-grid": {
+    "widget": {
+      "no-external-squads": "Внешних сквадов нет",
+      "no-external-squads-line-1": "Внешние сквады позволяют настраивать параметры под отдельные группы пользователей.",
+      "no-external-squads-line-2": "Для каждого сквада можно переопределить шаблоны подписки и другие настройки.",
+      "no-external-squads-line-3": "Создайте сквад и добавьте в него пользователей, чтобы применить свои конфигурации."
+    }
+  },
+  "external-squads-settings": {
+    "tab": {
+      "widget": {
+        "override-subscription-settings-for-this-external-squad": "Переопределить настройки подписки для этого внешнего сквада",
+        "add-override": "Добавить переопределение"
+      }
+    }
+  },
+  "srr-advanced-warning-overlay": {
+    "warning-line-1": "Эта возможность рассчитана на продвинутых пользователей, понимающих риски и последствия.",
+    "incorrect-configuration-line-1": "Неверная конфигурация",
+    "incorrect-configuration-line-2": "может привести к непредсказуемому поведению",
+    "review-settings-carefully-line-1": "Внимательно проверьте настройки",
+    "review-settings-carefully-line-2": "прежде чем применять изменения"
+  },
+  "auth-settings": {
+    "header": {
+      "title": "Способы входа",
+      "description": "Управление способами входа."
+    },
+    "error-modal": {
+      "title": "Не удалось обновить",
+      "description": "При обновлении настроек аутентификации произошла ошибка. Посмотрите подробности ниже и попробуйте ещё раз.",
+      "unknown-error": "Запрос завершился неизвестной ошибкой."
+    },
+    "passkey": {
+      "title": "Passkey",
+      "manage-button": "Управление",
+      "rpId": {
+        "label": "Домен фронтенда",
+        "description": "Публичный домен вашего фронтенда без протокола (напр. example.com)"
+      },
+      "origin": {
+        "label": "Домен бэкенда",
+        "description": "Полный https-origin вашего бэкенда (напр. https://api.example.com)"
+      }
+    },
+    "password": {
+      "title": "Пароль"
+    },
+    "telegram": {
+      "adminIds": {
+        "label": "Разрешённые ID админов",
+        "placeholder": "Введите ID админов"
+      }
+    },
+    "fields": {
+      "clientId": {
+        "label": "Client ID",
+        "description": "Client ID провайдера OAuth2",
+        "placeholder": "Введите client ID"
+      },
+      "clientSecret": {
+        "label": "Client secret",
+        "description": "Client secret провайдера OAuth2",
+        "placeholder": "Введите client secret"
+      },
+      "plainDomain": {
+        "label": "Домен",
+        "description": "Домен для PocketID (напр. example.com)",
+        "placeholder": "example.com"
+      },
+      "allowedEmails": {
+        "label": "Разрешённые email",
+        "description": "Список разрешённых адресов электронной почты.",
+        "placeholder": "Введите email"
+      },
+      "realm": {
+        "label": "Realm",
+        "description": "Название realm в Keycloak"
+      },
+      "keycloakDomain": {
+        "label": "Домен Keycloak",
+        "description": "Домен сервера Keycloak без протокола (напр. keycloak.docs.rw)"
+      }
+    }
+  },
+  "passkeys-drawer": {
+    "component": {
+      "passkeys": "Passkey",
+      "no-passkeys-registered-yet": "Passkey пока не добавлены",
+      "add-passkeys-description": "Добавьте первый Passkey, чтобы входить без пароля на всех своих устройствах",
+      "register": "Добавить",
+      "last-used-at": "Последнее использование"
+    }
+  },
+  "branding-settings-card": {
+    "widget": {
+      "customize-your-remnawave-instance": "Настройка внешнего вида Remnawave",
+      "branding-settings": "Настройки брендинга",
+      "the-title-that-will-be-displayed-on-login-page": "Заголовок, который будет показан на странице входа",
+      "brand-name": "Название бренда",
+      "the-url-to-your-brand-logo-image": "Ссылка на изображение логотипа. Подойдёт обычная http(s)-ссылка или base64 data URL (data:image/svg+xml;base64,...).",
+      "colored-title-format": "Формат цветного заголовка",
+      "colored-title-description": "Отдельные слова можно раскрасить синтаксисом {color}слово. Поддерживаются и HEX-цвета (#RRGGBB), и названия цветов Mantine.",
+      "example-hex-colors": "Пример с HEX-цветами",
+      "example-mantine-colors": "Пример с цветами Mantine",
+      "example-mixed": "Пример со смешанными цветами",
+      "color-format-note": "💡 Цвет применяется только к слову сразу после маркера. Без маркеров текст будет белым."
+    }
+  },
+  "experimental-settings-card": {
+    "widget": {
+      "experimental-features": "Экспериментальные возможности",
+      "description": "Возможности, которые ещё в разработке. Могут измениться или исчезнуть в любой момент.",
+      "legacy-layout-style": "Старый стиль вёрстки"
+    }
+  },
+  "api-tokens-card": {
+    "widget": {
+      "api-tokens-description": "Управление токенами доступа к API.",
+      "api-tokens": "Токены API",
+      "no-api-tokens-found": "Токенов API нет",
+      "token-name": "Название токена",
+      "create-api-token": "Создать токен API",
+      "full-access": "Полный доступ",
+      "col-scopes": "Права",
+      "col-created": "Создан",
+      "col-expires": "Истекает",
+      "expired": "Истёк",
+      "expires-in-days": "Истекает через (дней)",
+      "one-time-notice": "Из соображений безопасности токен показывается <emphasis>только один раз</emphasis>, сразу после создания. Обязательно скопируйте и сохраните его в надёжном месте — увидеть его снова не получится."
+    }
+  },
+  "external-squads-hosts": {
+    "tab": {
+      "widget": {
+        "host-overrides": "Переопределения хостов",
+        "override-host-settings-for-this-external-squad": "Переопределить настройки хостов для этого внешнего сквада."
+      }
+    }
+  },
+  "reset-usage-user": {
+    "feature": {
+      "reset-usage": "Сбросить расход"
+    }
+  },
+  "help-action-icon": {
+    "shared": {
+      "help-article": "Справка"
+    }
+  },
+  "internal-squad-card": {
+    "widget": {
+      "available-nodes": "Доступные ноды"
+    }
+  },
+  "help-drawer": {
+    "shared": {
+      "failed-to-load-documentation": "Не удалось загрузить документацию"
+    }
+  },
+  "external-squads-response-headers": {
+    "widget": {
+      "response-headers": "Заголовки",
+      "headers-inherited-description": "По умолчанию заголовки ответа наследуются из основных настроек подписки.",
+      "add-headers": "Добавить заголовки",
+      "add-headers-description": "Перечисленные здесь заголовки добавляются к унаследованным. Если заголовок с таким же ключом уже есть в основных настройках, он будет перезаписан.",
+      "remove-headers": "Убрать заголовки",
+      "remove-headers-description": "Перечисленные здесь ключи заголовков будут убраны из ответа, даже если их задают основные настройки.",
+      "enter-header-key": "Введите ключ заголовка"
+    }
+  },
+  "subscription-hwid-settings": {
+    "widget": {
+      "hwid-card-description": "Внимательно прочитайте документацию, прежде чем включать HWID. Эту возможность поддерживают не все клиенты.",
+      "hwid-settings": "Настройки HWID",
+      "hwid-limit": "Лимит HWID",
+      "fallback-device-limit-description": "Укажите максимальное число устройств на одну подписку",
+      "fallback-device-limit": "Лимит устройств по умолчанию",
+      "max-devices-announce-description": "Введите сообщение, которое увидит пользователь, достигший максимума устройств",
+      "max-devices-announce": "Сообщение о лимите устройств",
+      "max-200-characters": "Не больше 200 символов"
+    }
+  },
+  "external-squads-hwid-settings": {
+    "tab": {
+      "widget": {
+        "hwid-settings-override": "Переопределение настроек HWID",
+        "override-hwid-description": "Переопределяет лимит устройств HWID для этого внешнего сквада. Если выключено, используются общие настройки подписки.",
+        "enable-hwid-override": "Включить переопределение HWID"
+      }
+    }
+  },
+  "external-squads-custom-remarks": {
+    "widget": {
+      "override-remarks-description": "Переопределяет примечания по статусам пользователя для этого внешнего сквада. Если выключено, используются общие настройки подписки.",
+      "enable-override": "Включить переопределение"
+    }
+  },
+  "subscription-user-remarks-card": {
+    "widget": {
+      "empty-hosts": "Пустой список хостов",
+      "hwid-max-devices-exceeded": "HWID: превышен лимит устройств",
+      "hwid-not-supported": "HWID: не поддерживается"
+    }
+  },
+  "multi-select-nodes": {
+    "feature": {
+      "profile-and-inbounds": "Профиль и инбаунды"
+    }
+  },
+  "use-nodes-table-widget": {
+    "online": "Онлайн",
+    "traffic-used": "Израсходовано трафика",
+    "config-profile": "Профиль",
+    "xray-v": "Xray v.",
+    "node-v": "Node v.",
+    "provider": "Провайдер",
+    "total-ram": "Всего RAM",
+    "cpu-model": "Модель CPU"
+  },
+  "subpage-config-visual-editor": {
+    "widget": {
+      "configuration-saved-successfully": "Конфигурация сохранена",
+      "edit-your-subscription-page-configuration": "Редактирование конфигурации страницы подписки",
+      "subpage-editor": "Редактор страницы подписки",
+      "brand-appearance": "Внешний вид бренда",
+      "branding": "Брендинг",
+      "brand-title": "Заголовок бренда",
+      "your-brand-name": "Название вашего бренда",
+      "support-url": "Ссылка на поддержку",
+      "additional-languages": "Дополнительные языки",
+      "localization": "Локализация",
+      "ui-configuration": "Настройка интерфейса",
+      "subscription-info-block-design": "Оформление блока с информацией о подписке",
+      "configure-apps-for-each-platform": "Настройте приложения для каждой платформы",
+      "platforms": "Платформы",
+      "add-platform": "Добавить платформу",
+      "no-platforms-configured": "Платформы не настроены",
+      "add-a-platform-to-get-started": "Добавьте платформу, чтобы начать",
+      "open-svg-library": "Открыть библиотеку SVG",
+      "installation-guides-design": "Оформление инструкций по установке"
+    },
+    "subpage-config-saved-line-1": "Чтобы изменения применились, перезапустите docker-контейнер Remnawave Subscription-page.",
+    "subpage-config-saved-line-2": "Например, можно выполнить в терминале такую команду:"
+  },
+  "app-editor-drawer-content": {
+    "component": {
+      "app-settings": "Настройки приложения",
+      "featured": "Рекомендуемое",
+      "app-name": "Название приложения",
+      "blocks": "Блоки",
+      "add-block": "Добавить блок"
+    }
+  },
+  "block-editor": {
+    "modal": {
+      "component": {
+        "untitled-block": "Блок без названия",
+        "edit-block": "Изменить блок",
+        "block-settings": "Настройки блока",
+        "icon-color": "Цвет иконки",
+        "icon-color-help": "Подойдёт любой цвет темы Mantine ({{colors}}) или любой корректный HEX (например: #009688).",
+        "title": "Заголовок",
+        "buttons": "Кнопки",
+        "add-button": "Добавить кнопку"
+      }
+    }
+  },
+  "button-editor": {
+    "component": {
+      "link": "Ссылка",
+      "type": "Тип",
+      "button-text": "Текст кнопки"
+    }
+  },
+  "localized-text-editor": {
+    "component": {
+      "done": "Готово"
+    }
+  },
+  "platform-editor": {
+    "component": {
+      "platform-svg-icon": "SVG-иконка платформы",
+      "display-name": "Отображаемое название",
+      "apps": "Приложения",
+      "add-app": "Добавить приложение",
+      "unnamed-app": "Приложение без названия",
+      "edit-app": "Изменить приложение"
+    }
+  },
+  "svg-icon-select": {
+    "component": {
+      "select-icon": "Выберите иконку...",
+      "no-icons-in-library": "В библиотеке нет иконок"
+    }
+  },
+  "svg-library-modal": {
+    "component": {
+      "svg-library": "Библиотека SVG",
+      "add-icon": "Добавить иконку",
+      "add-icons-to-use-them-in-blocks-and-buttons": "Добавьте иконки, чтобы использовать их в блоках и кнопках",
+      "edit-icon": "Изменить иконку",
+      "only-latin-characters-no-spaces": "Только латиница, без пробелов",
+      "only-latin-characters-allowed": "Допустима только латиница",
+      "icon-key": "Ключ иконки",
+      "svg-code": "Код SVG",
+      "preview": "Предпросмотр",
+      "where-to-find-icons": "Где взять иконки?",
+      "you-can-find-beautiful-icons-at": "Хорошие иконки есть на",
+      "where-to-find-icons-description": "Нажмите на любую иконку, выберите «Copy SVG» и вставьте сюда. Выбирайте стиль «Outline» или «Filled»."
+    }
+  },
+  "external-squads-subpage-config": {
+    "tab": {
+      "widget": {
+        "subscription-page-config": "Конфигурация страницы подписки",
+        "subscription-page-config-description": "Для этого внешнего сквада можно переопределить конфигурацию страницы подписки (Remnawave Subscription Page).",
+        "subpage-config": "Конфигурация страницы",
+        "select-config": "Выберите конфигурацию..."
+      }
+    }
+  },
+  "subpage-config-editor-page": {
+    "component": {
+      "import-config": "Импортировать конфигурацию",
+      "download-config": "Скачать конфигурацию",
+      "importing-config": "Импортируем конфигурацию",
+      "this-may-take-a-while": "Это может занять время...",
+      "config-imported-successfully": "Конфигурация импортирована",
+      "failed-to-parse-config-file": "Не удалось разобрать файл конфигурации"
+    }
+  },
+  "base-translations-drawer": {
+    "component": {
+      "base-translations": "Базовые переводы",
+      "completed": "Готово {{count}}/{{total}}"
+    }
+  },
+  "statistic-sparkline-card": {
+    "widget": {
+      "peak": "Пик"
+    }
+  },
+  "base-settings-block": {
+    "component": {
+      "base-settings": "Базовые настройки",
+      "meta-title": "Meta title",
+      "meta-description": "Meta description",
+      "show-connection-keys": "Показывать ключи подключения",
+      "show-or-hide-raw-connection-keys": "Показать или скрыть сырые ключи подключения",
+      "hide-get-link-button": "Скрыть кнопку «Get Link»",
+      "hide-the-get-link-button-top-right-corner": "Скрыть кнопку «Get Link» в правом верхнем углу"
+    }
+  },
+  "import-config-sections": {
+    "modal": {
+      "import-options-description": "Выберите, что импортировать из файла конфигурации",
+      "replace-entire-config-with-imported-one": "Заменить всю конфигурацию импортированной",
+      "full-import": "Полный импорт",
+      "partial-import": "Частичный импорт",
+      "merge-svg-library": "Добавит {{0}} иконок к вашей коллекции (сейчас {{1}})",
+      "import-svg-library": "Импортировать библиотеку SVG",
+      "import-platforms-descriptions": "Заменит платформы, локали и переводы, а библиотеку SVG дополнит",
+      "import-platforms": "Импортировать платформы",
+      "replace-base-translation-and-locales": "Заменить базовый перевод и локали",
+      "import-base-translations": "Импортировать базовые переводы"
+    }
+  },
+  "revoke-subscription-user": {
+    "feature": {
+      "full-revoke": "Полный отзыв",
+      "revoke": "Отозвать",
+      "passwords-only": "Только пароли",
+      "passwords-only-description": "Перевыпускает только пароли подключения; ссылка на подписку остаётся прежней",
+      "full-revoke-description": "Перевыпускает ссылку на подписку и пароли подключения"
+    }
+  },
+  "nodes-quick-stats": {
+    "widget": {
+      "users-online": "Пользователей онлайн",
+      "online-nodes": "Нод онлайн"
+    }
+  },
+  "template-info-popover": {
+    "shared": {
+      "template-variables": "Template variables",
+      "available-variables-are-listed-below": "Доступные переменные перечислены ниже.",
+      "you-can-use-template-variables-in-this-field": "В этом поле поддерживаются template variables."
+    }
+  },
+  "user-active-session-drawer": {
+    "widget": {
+      "drop-all-user-connections-all-nodes": "Разорвать все соединения пользователя (все ноды)",
+      "drop-all-user-connections-this-node": "Разорвать все соединения пользователя (эта нода)",
+      "drop-this-connection-on-this-node": "Разорвать это соединение на этой ноде"
+    }
+  },
+  "contact-information-card": {
+    "contact-information": "Контактные данные"
+  },
+  "traffic-limits-card": {
+    "traffic-and-limits": "Трафик и лимиты",
+    "traffic-limit-description": "0 — без ограничений",
+    "traffic-limit": "Лимит трафика"
+  },
+  "node-vitals": {
+    "card": {
+      "plugin": "Плагин",
+      "review-documentation-for-more-information": "Подробности — в документации.",
+      "nothing-found": "Ничего не найдено...",
+      "select-plugin": "Выберите плагин",
+      "proxy-url": "Прокси URL",
+      "proxy-url-description": "Необязательно. Если задать, внутренние запросы панели к ноде пойдут через этот прокси."
+    }
+  },
+  "node-plugin-card": {
+    "widget": {
+      "active-on-nodes": "Активен на нодах"
+    }
+  },
+  "active-on-nodes": {
+    "modal": {
+      "shared": {
+        "this-plugin-is-not-active-on-any-nodes": "Этот плагин не активен ни на одной ноде."
+      }
+    }
+  },
+  "node-plugins-grid": {
+    "widget": {
+      "node-plugins-are-an-advanced-feature-please-review-the-documentation-before-use": "Плагины нод — продвинутая возможность. Прочитайте документацию перед использованием.",
+      "no-node-plugins-yet": "Плагинов нод пока нет",
+      "create-a-plugin-to-extend-node-capabilities-with": "Создайте плагин, чтобы расширить возможности ноды через"
+    }
+  },
+  "node-plugin-executor": {
+    "content": {
+      "enter-at-least-one-ip-address": "Укажите хотя бы один IP-адрес.",
+      "block-specific-ip-addresses-on-selected-nodes": "Заблокировать конкретные IP-адреса на выбранных нодах",
+      "block-ips": "Заблокировать IP",
+      "remove-ip-blocks-on-selected-nodes": "Снять блокировки IP на выбранных нодах",
+      "unblock-ips": "Разблокировать IP",
+      "executor-description": "Блокировки IP временные — они держатся только до перезапуска ноды или её ядра. Также блокировки могут сброситься при изменении конфигурации плагина.",
+      "recreate-nftables-rules-on-selected-nodes": "Пересоздать правила nftables на выбранных нодах",
+      "recreate-tables": "Пересоздать таблицы",
+      "block-ips-description": "По одной записи в строке. Timeout 0 — блокировка до перезапуска.",
+      "unblock-ips-description": "По одному IP-адресу в строке.",
+      "ips-to-block": "IP для блокировки",
+      "ips-to-unblock": "IP для разблокировки",
+      "format-one-per-line": "Формат (по одному в строке):",
+      "no-connected-nodes-available": "Нет подключённых нод.",
+      "deselect-all": "Снять выделение",
+      "execute": "Выполнить"
+    }
+  },
+  "torrent-blocker-stats": {
+    "widget": {
+      "total-reports": "Всего отчётов",
+      "distinct-nodes": "Уникальных нод",
+      "distinct-users": "Уникальных пользователей",
+      "last-24-hours": "За 24 часа",
+      "by-report-count": "По числу отчётов",
+      "top-users": "Топ пользователей"
+    }
+  },
+  "torrent-blocker-reports-table": {
+    "widget": {
+      "truncate-reports": "Очистить отчёты",
+      "truncate-reports-description": "Все отчёты Torrent Blocker будут удалены безвозвратно."
+    }
+  },
+  "node-active-session": {
+    "item": {
+      "widget": {
+        "view-user": "Открыть пользователя"
+      }
+    }
+  },
+  "node-active-sessions": {
+    "drawer": {
+      "widget": {
+        "active-users-on-this-node": "Активные пользователи на этой ноде"
+      }
+    }
+  },
+  "nodes-datatable": {
+    "widget": {
+      "column-width": "Ширина колонок",
+      "column-order": "Порядок колонок",
+      "column-toggle": "Показ колонок"
+    }
+  },
+  "user-torrent-blocker-report-item": {
+    "processed-at": "Обработано",
+    "unblocked-at": "Разблокировано"
+  },
+  "get-user-torrent-blocker-reports": {
+    "feature": {
+      "blocker-reports": "Отчёты Torrent Blocker"
+    }
+  },
+  "user-torrent-blocker-reports": {
+    "drawer": {
+      "widget": {
+        "total-reports": "Всего отчётов"
+      }
+    }
+  },
+  "user-subscription-requests-drawer": {
+    "widget": {
+      "total-records": "Всего записей"
+    }
+  },
+  "sessions-explorer-idle": {
+    "description-1": "Операция может занять время — зависит от числа нод и пользователей. Сессии собираются последовательно, чтобы не перегружать бэкенд.",
+    "start-exploring": "Начать обход"
+  },
+  "sessions-explorer-progress": {
+    "exploring-nodes": "Обходим ноды...",
+    "nodes-processed": "Обработано нод: {{completed}} из {{total}}",
+    "nodes-failed": "с ошибкой: {{count}}"
+  },
+  "sessions-explorer": {
+    "widget": {
+      "all-nodes-failed-to-return-session-data": "Ни одна нода не вернула данные о сессиях.",
+      "total-ips": "Всего IP",
+      "unique-ips": "Уникальных IP",
+      "nodes-explored": "Обойдено нод",
+      "total-users": "Всего пользователей",
+      "restart-scan": "Запустить заново",
+      "clear-results": "Очистить результаты",
+      "search-by-ip": "Поиск по IP-адресу...",
+      "no-results-for-ip": "Пользователей с IP «{{ip}}» не найдено"
+    }
+  },
+  "mobile-stats": {
+    "widget": {
+      "upcoming": "Предстоит",
+      "per-month": "За месяц",
+      "total-spent": "Всего потрачено"
+    }
+  },
+  "mobile-providers-list": {
+    "widget": {
+      "invoices": "Счета"
+    }
+  },
+  "mobile-infra-billing": {
+    "widget": {
+      "history": "История",
+      "providers": "Провайдеры"
+    }
+  },
+  "prime-modal": {
+    "shared": {
+      "description": "Поддержите проект и станьте частью его ближнего круга — ближе к команде, роадмапу и самой работе.",
+      "priority-support-title": "Приоритетная поддержка",
+      "priority-support-description": "Без очереди — на ваши вопросы отвечает команда и отвечает первыми.",
+      "private-community-title": "Закрытое сообщество",
+      "private-community-description": "Закрытый круг участников Prime.",
+      "shape-the-roadmap-title": "Влияйте на роадмап",
+      "shape-the-roadmap-description": "Голосуйте за то, что будет сделано дальше, и задавайте направление проекта.",
+      "direct-developer-access-title": "Прямой доступ к разработчику",
+      "direct-developer-access-description": "Прямая линия с разработчиком — без тикетов и посредников.",
+      "join-button": "Вступить в RW Prime"
+    }
+  },
+  "hosts-datatable": {
+    "widget": {
+      "reset-sort": "Сбросить сортировку"
+    }
+  },
+  "columns-visibility-popover": {
+    "show-all": "Показать все",
+    "hide-all": "Скрыть все"
+  },
+  "use-hosts-table-widget": {
+    "disabled": "Выключен",
+    "enabled": "Включён",
+    "hidden": "Скрыт"
+  },
+  "node-tracking-and-billing": {
+    "card": {
+      "note": "Примечание"
+    }
+  },
+  "node-ips": {
+    "add-ip": "Добавить IP",
+    "remove-ip": "Убрать IP",
+    "invalid-ip": "Некорректный адрес IPv4 или IPv6",
+    "ip-is-required": "Укажите IP-адрес",
+    "max-ips-reached": "Максимум {{max}} IP-адресов",
+    "no-ips-yet": "IP-адресов пока нет"
+  },
+  "node-ip-statuses": {
+    "inbound": "Входящий",
+    "outbound": "Исходящий",
+    "management": "Управляющий",
+    "transit": "Транзитный",
+    "monitoring": "Мониторинг",
+    "reserve": "Резервный",
+    "blocked": "Заблокирован",
+    "flagged": "Помечен",
+    "deprecated": "Устаревший",
+    "unknown": "Неизвестен"
+  },
+  "node-consumption": {
+    "card": {
+      "node-consumption-multiplier-1": "Применяет выбранный множитель к трафику ноды (1.0 = обычный, 0.5 = половина, 2.0 = двойной).",
+      "node-consumption-multiplier-2": "Нужен в основном для корректного отображения лимитов, когда включено отслеживание трафика. На подробную статистику (графики) множитель ноды не влияет.",
+      "node-consumption-multiplier": "Множитель расхода ноды",
+      "user-consumption-multiplier": "Множитель расхода пользователя"
+    }
+  },
+  "keypair-generator": {
+    "widget": {
+      "generate": "Сгенерировать"
+    }
+  },
+  "bulk-all-users-actions": {
+    "modal": {
+      "perform-actions-on-all-users": "Действия над всеми пользователями"
+    }
+  },
+  "backend-tools-card": {
+    "widget": {
+      "queue-viewer": "Queue Viewer",
+      "queue-viewer-description": "Мониторинг и управление очередями фоновых задач.",
+      "scalar-description": "Современный интерактивный справочник по API.",
+      "swagger-description": "Классический обозреватель документации OpenAPI.",
+      "backend-tools-description": "Доступ к Queue Viewer, Scalar или Swagger.",
+      "login": "Логин",
+      "backend-tools": "Инструменты бэкенда"
+    }
+  },
+  "http-stats": {
+    "page": {
+      "component": {
+        "http-stats-description": "Число запросов по каждому маршруту API с момента последнего перезапуска панели."
+      }
+    }
+  },
+  "http-stats-table": {
+    "widget": {
+      "total-requests": "Всего запросов",
+      "tracked-routes": "Отслеживаемых маршрутов",
+      "peak-requests": "Пик запросов",
+      "avg-route": "В среднем на маршрут"
+    }
+  },
+  "node-inbounds-hosts-drawer": {
+    "widget": {
+      "no-active-config-profile": "У этой ноды нет активного профиля",
+      "linked": "Связан"
+    }
+  },
+  "node-integrations": {
+    "modal": {
+      "title": "Интеграции ноды",
+      "delete-description": "Интеграция будет убрана со всех нод, а затронутые ноды перезапустятся."
+    },
+    "editor": {
+      "description-placeholder": "Что делает эта интеграция",
+      "config-must-be-an-object": "Конфигурация должна быть JSON-объектом"
+    },
+    "select": {
+      "label": "Интеграции",
+      "placeholder": "Выберите интеграции"
+    }
+  },
+  "shared-lists": {
+    "modal": {
+      "subtitle": "Переиспользуемые списки IP и ASN, на которые плагины ссылаются как ext:name",
+      "delete-description": "Список будет удалён. Плагины, которые на него ссылаются, сохранят ссылку ext: и не пройдут валидацию, пока её не поправить."
+    },
+    "editor": {
+      "name-description": "В плагинах указывается как ext:name. Потом не изменить."
+    }
+  },
+  "apply-to-nodes": {
+    "title": "Применить на нодах?",
+    "apply": "Применить сейчас",
+    "apply-description": "Затронутые ноды получат новую конфигурацию сразу.",
+    "later": "Не сейчас",
+    "later-description": "Изменения сохранены, но ноды останутся на текущей версии до следующей синхронизации или перезапуска."
+  },
+  "node-geocheck": {
+    "title": "GeoCheck",
+    "source-default": "По умолчанию",
+    "default-placeholder": "Автоматически",
+    "default-description": "Нода будет использовать исходящий маршрут по умолчанию.",
+    "ip-description": "Выберите один из IP ноды или введите любой адрес",
+    "interface-description": "Выберите один из интерфейсов ноды или введите любое название",
+    "run": "Запустить проверку",
+    "running": "Выполняем GeoCheck",
+    "running-description": "Нода проверяет связность, обычно это занимает до минуты.",
+    "failed-description": "Ноде не удалось выполнить GeoCheck.",
+    "view-image": "Отчёт",
+    "no-image": "В отчёте нет изображения, откройте JSON",
+    "requires-node-version": "Требуется Remnawave Node {{version}} или новее"
+  },
+  "quick-open": {
+    "page": {
+      "description": "Откройте любую сущность по её идентификатору или скопируйте прямую ссылку, чтобы поделиться"
+    }
+  },
+  "node-ssh": {
+    "title": "SSH-терминал",
+    "key-imported": "ваш ключ",
+    "key-description-imported": "Подпись идёт вашим импортированным ключом; браузер он не покидает. Убедитесь, что его публичная часть лежит в authorized_keys на сервере.",
+    "key-use-own": "Использовать свой ключ",
+    "key-generate-new": "Сгенерировать новый ключ",
+    "key-import": "Импортировать ключ",
+    "key-import-title": "Свой ключ",
+    "key-import-label": "Приватный ключ",
+    "key-import-description": "Остаётся в этом браузере, зашифрованным в хранилище. Ключи с парольной фразой не поддерживаются.",
+    "key-error": {
+      "encrypted": "Ключ защищён парольной фразой. Снимите её или импортируйте копию без неё.",
+      "malformed": "Не удалось прочитать ключ. Скопируйте файл целиком, вместе со строками BEGIN и END.",
+      "unsupported-algo": "Поддерживаются только ключи Ed25519 и RSA.",
+      "unsupported-format": "Это не похоже на файл приватного ключа."
+    },
+    "vault-setup-title": "Настройка хранилища ключей",
+    "vault-unlock-title": "Разблокировка хранилища",
+    "seed-warning": "Запишите эти 12 слов и держите их офлайн. Это единственный способ восстановить ваши SSH-ключи — панель их не видит и восстановить не сможет.",
+    "create-vault": "Создать хранилище",
+    "unlock": "Разблокировать",
+    "unlock-description": "Введите 12 слов, которые вы сохранили при создании хранилища.",
+    "seed-invalid": "Это не похоже на сидфразу из 12 слов",
+    "seed-mismatch": "Эта сидфраза не подходит к хранилищу в этом браузере",
+    "key-title": "Установите публичный ключ",
+    "key-description": "Для этой ноды сгенерирован отдельный ключ, браузер он не покидает. Добавьте строку ниже в authorized_keys на сервере и подключайтесь.",
+    "authorized-keys": "Строка для authorized_keys",
+    "host": "Хост",
+    "host-hint": "Оставьте пустым, чтобы взять адрес ноды",
+    "connect": "Подключиться",
+    "hostkey-new-title": "Неизвестный ключ хоста",
+    "hostkey-new-description": "Вы подключаетесь к этому хосту из этого браузера впервые. Сверьте отпечаток по другому каналу, прежде чем доверять ему.",
+    "hostkey-changed-title": "Ключ хоста изменился",
+    "hostkey-changed-description": "Ключ хоста не совпадает с тем, которому вы доверились раньше. Это может значить, что сервер переустановили — или что кто-то перехватывает соединение.",
+    "fingerprint": "Отпечаток",
+    "known-fingerprint": "Доверенный ранее",
+    "trust-and-connect": "Доверять и подключиться",
+    "abort": "Прервать",
+    "disconnected": "Сессия закрыта",
+    "passcode-required-description": "Пока в этом браузере не задан пасскод, хранилищем пользоваться нельзя. Заодно не придётся каждый раз вводить сидфразу.",
+    "passcode-save": "Сохранить пасскод",
+    "passcode-title": "Задайте пасскод для этого браузера",
+    "passcode-description": "Разблокирует хранилище в этом браузере после перезагрузки страницы.",
+    "passcode-length": "{{length}} символов, хотя бы один из них — буква.",
+    "passcode-needs-letter": "Добавьте хотя бы одну букву.",
+    "passcode-unlock-description": "Введите пасскод, заданный для этого браузера.",
+    "passcode-wrong": "Неверный пасскод",
+    "passcode-attempts": "Осталось попыток: {{count}}",
+    "passcode-exhausted": "Слишком много неверных попыток, пасскод отключён. Разблокируйте хранилище сидфразой и задайте новый.",
+    "use-phrase": "Забыли пасскод?",
+    "use-passcode": "Назад к пасскоду",
+    "connection-settings": "Настройки",
+    "resize": "Изменить размер окна",
+    "retry": "Повторить",
+    "ticket-failed": "Панель отказалась открыть сессию.",
+    "vault-manage": "Управление хранилищем",
+    "export": "Выгрузить хранилище",
+    "export-locked": "Сначала разблокируйте хранилище — бэкап можно сделать только из открытого.",
+    "export-description": "Сохраняет зашифрованный файл с ключами и адресами нод. Без сидфразы прочитать его нельзя, поэтому хранить можно где угодно.",
+    "import": "Загрузить хранилище",
+    "import-description": "Восстанавливает ключи из файла бэкапа. Введите сидфразу, с которой бэкап был создан.",
+    "import-select": "Выберите файл бэкапа",
+    "import-ready": "Бэкап от {{date}}",
+    "create-new-instead": "Создать новое хранилище",
+    "reset-really": "Да, удалить все ключи",
+    "import-invalid": "Это не файл бэкапа хранилища",
+    "import-mismatch": "Сидфраза не открывает этот бэкап",
+    "reset": "Сбросить хранилище",
+    "reset-description": "Удаляет хранилище и все SSH-ключи в нём. Приватные ключи пропадут безвозвратно, поэтому публичные, уже установленные на нодах, станут бесполезны — на каждую придётся поставить новый. Доступ к панели это не затронет.",
+    "lost-everything": "Потеряли и пасскод, и сидфразу?",
+    "snippets-title": "Сниппеты",
+    "snippets-empty": "Сниппетов пока нет",
+    "snippet-command": "Команда",
+    "snippet-add": "Добавить сниппет",
+    "snippet-edit": "Изменить сниппет",
+    "connections-title": "Сохранённые подключения",
+    "connections-empty": "Сохранённых подключений пока нет",
+    "connections-current": "Текущее"
+  }
+}

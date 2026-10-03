@@ -1,0 +1,665 @@
+package users
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"remnawave-go/internal/database"
+
+	"github.com/go-chi/chi/v5"
+)
+
+type Handler struct {
+	service         *Service
+	subPublicDomain string
+}
+
+func NewHandler(service *Service, subPublicDomain string) *Handler {
+	return &Handler{
+		service:         service,
+		subPublicDomain: subPublicDomain,
+	}
+}
+
+type UsersListResponse struct {
+	Response struct {
+		Users []map[string]interface{} `json:"users"`
+		Total int                      `json:"total"`
+	} `json:"response"`
+}
+
+type SingleUserResponse struct {
+	Response interface{} `json:"response"`
+}
+
+func FormatUser(u *database.User, subPublicDomain string) map[string]interface{} {
+	traffic := map[string]interface{}{
+		"usedTrafficBytes":         uint64(0),
+		"lifetimeUsedTrafficBytes": uint64(0),
+		"onlineAt":                 nil,
+		"firstConnectedAt":         nil,
+		"lastConnectedNodeUuid":    nil,
+	}
+	if u.Traffic != nil {
+		traffic["usedTrafficBytes"] = u.Traffic.UsedTrafficBytes
+		traffic["lifetimeUsedTrafficBytes"] = u.Traffic.LifetimeUsedTrafficBytes
+		if u.Traffic.OnlineAt != nil {
+			traffic["onlineAt"] = u.Traffic.OnlineAt.UTC().Format("2006-01-02T15:04:05.000Z")
+		}
+		if u.Traffic.FirstConnectedAt != nil {
+			traffic["firstConnectedAt"] = u.Traffic.FirstConnectedAt.UTC().Format("2006-01-02T15:04:05.000Z")
+		}
+		traffic["lastConnectedNodeUuid"] = u.Traffic.LastConnectedNodeUUID
+	}
+
+	subUrl := fmt.Sprintf("http://%s/%s", subPublicDomain, u.ShortUUID)
+	if strings.HasPrefix(subPublicDomain, "http://") || strings.HasPrefix(subPublicDomain, "https://") {
+		subUrl = fmt.Sprintf("%s/%s", subPublicDomain, u.ShortUUID)
+	}
+
+	var lastReset *string
+	if u.LastTrafficResetAt != nil {
+		s := u.LastTrafficResetAt.UTC().Format("2006-01-02T15:04:05.000Z")
+		lastReset = &s
+	}
+
+	var subRevoked *string
+	if u.SubRevokedAt != nil {
+		s := u.SubRevokedAt.UTC().Format("2006-01-02T15:04:05.000Z")
+		subRevoked = &s
+	}
+
+	var email interface{} = nil
+	if u.Email != "" {
+		email = u.Email
+	}
+
+	var tag interface{} = nil
+	if u.Tag != "" {
+		tag = u.Tag
+	}
+
+	var description interface{} = nil
+	if u.Description != "" {
+		description = u.Description
+	}
+
+	var extSquadUuid interface{} = nil
+	if u.ExternalSquadUUID != nil && *u.ExternalSquadUUID != "" {
+		extSquadUuid = *u.ExternalSquadUUID
+	}
+
+	activeSquads := make([]map[string]interface{}, 0, len(u.ActiveInternalSquads))
+	for _, sq := range u.ActiveInternalSquads {
+		activeSquads = append(activeSquads, map[string]interface{}{
+			"uuid": sq.UUID,
+			"name": sq.Name,
+		})
+	}
+
+	return map[string]interface{}{
+		"id":                     u.ID,
+		"shortUuid":              u.ShortUUID,
+		"username":               u.Username,
+		"status":                 u.Status,
+		"trafficLimitBytes":      u.TrafficLimitBytes,
+		"trafficLimitStrategy":   u.TrafficLimitStrategy,
+		"expireAt":               u.ExpireAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		"telegramId":             u.TelegramID,
+		"email":                  email,
+		"description":            description,
+		"tag":                    tag,
+		"hwidDeviceLimit":        u.HWIDDeviceLimit,
+		"externalSquadUuid":      extSquadUuid,
+		"trojanPassword":         u.TrojanPassword,
+		"vlessUuid":              u.VlessUUID,
+		"ssPassword":             u.SsPassword,
+		"lastTriggeredThreshold": u.LastTriggeredThreshold,
+		"subRevokedAt":           subRevoked,
+		"lastTrafficResetAt":     lastReset,
+		"createdAt":              u.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		"updatedAt":              u.UpdatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		"subscriptionUrl":        subUrl,
+		"activeInternalSquads":   activeSquads,
+		"userTraffic":            traffic,
+	}
+}
+
+func (h *Handler) GetUsers(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	status := r.URL.Query().Get("status")
+	tag := r.URL.Query().Get("tag")
+
+	usersList, err := h.service.GetAll(status, tag)
+	if err != nil {
+		http.Error(w, `{"message":"Failed to fetch users"}`, http.StatusInternalServerError)
+		return
+	}
+
+	formatted := make([]map[string]interface{}, len(usersList))
+	for i, u := range usersList {
+		formatted[i] = FormatUser(u, h.subPublicDomain)
+	}
+
+	var resp UsersListResponse
+	resp.Response.Users = formatted
+	resp.Response.Total = len(usersList)
+
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Handler) GetTags(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	tags, err := h.service.GetTags()
+	if err != nil {
+		tags = []string{}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"response": map[string]interface{}{
+			"tags": tags,
+		},
+	})
+}
+
+func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var dto CreateUserDTO
+	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
+		http.Error(w, `{"message":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.service.Create(dto)
+	if err != nil {
+		http.Error(w, `{"message":"Failed to create user"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(SingleUserResponse{Response: FormatUser(user, h.subPublicDomain)})
+}
+
+func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		idStr = chi.URLParam(r, "userId")
+	}
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, `{"message":"Invalid user ID"}`, http.StatusBadRequest)
+		return
+	}
+
+	user, err := h.service.GetByID(id)
+	if err != nil {
+		http.Error(w, `{"message":"User not found"}`, http.StatusNotFound)
+		return
+	}
+
+	json.NewEncoder(w).Encode(SingleUserResponse{Response: FormatUser(user, h.subPublicDomain)})
+}
+
+func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		idStr = chi.URLParam(r, "userId")
+	}
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, `{"message":"Invalid user ID"}`, http.StatusBadRequest)
+		return
+	}
+
+	var updates map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+		http.Error(w, `{"message":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	delete(updates, "id")
+	delete(updates, "shortUuid")
+
+	user, err := h.service.Update(id, updates)
+	if err != nil {
+		http.Error(w, `{"message":"Failed to update user"}`, http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(SingleUserResponse{Response: FormatUser(user, h.subPublicDomain)})
+}
+
+func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		idStr = chi.URLParam(r, "userId")
+	}
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, `{"message":"Invalid user ID"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := h.service.Delete(id); err != nil {
+		http.Error(w, `{"message":"Failed to delete user"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) ResetTraffic(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		idStr = chi.URLParam(r, "userId")
+	}
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, `{"message":"Invalid user ID"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := h.service.ResetTraffic(id); err != nil {
+		http.Error(w, `{"message":"Failed to reset traffic"}`, http.StatusInternalServerError)
+		return
+	}
+
+	user, _ := h.service.GetByID(id)
+	json.NewEncoder(w).Encode(SingleUserResponse{Response: FormatUser(user, h.subPublicDomain)})
+}
+
+func (h *Handler) EnableUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		idStr = chi.URLParam(r, "userId")
+	}
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, `{"message":"Invalid user ID"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := h.service.SetStatus(id, "ACTIVE"); err != nil {
+		http.Error(w, `{"message":"Failed to enable user"}`, http.StatusInternalServerError)
+		return
+	}
+
+	user, _ := h.service.GetByID(id)
+	json.NewEncoder(w).Encode(SingleUserResponse{Response: FormatUser(user, h.subPublicDomain)})
+}
+
+func (h *Handler) DisableUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		idStr = chi.URLParam(r, "userId")
+	}
+	id, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, `{"message":"Invalid user ID"}`, http.StatusBadRequest)
+		return
+	}
+
+	if err := h.service.SetStatus(id, "DISABLED"); err != nil {
+		http.Error(w, `{"message":"Failed to disable user"}`, http.StatusInternalServerError)
+		return
+	}
+
+	user, _ := h.service.GetByID(id)
+	json.NewEncoder(w).Encode(SingleUserResponse{Response: FormatUser(user, h.subPublicDomain)})
+}
+
+func (h *Handler) ExtendUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		idStr = chi.URLParam(r, "userId")
+	}
+	id, _ := strconv.ParseUint(idStr, 10, 64)
+	user, err := h.service.GetByID(id)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "User not found"})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"response": FormatUser(user, h.subPublicDomain),
+	})
+}
+
+func (h *Handler) RevokeUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	idStr := chi.URLParam(r, "id")
+	if idStr == "" {
+		idStr = chi.URLParam(r, "userId")
+	}
+	id, _ := strconv.ParseUint(idStr, 10, 64)
+	now := time.Now().UTC()
+	user, err := h.service.Update(id, map[string]interface{}{
+		"subRevokedAt": now,
+		"status":       "DISABLED",
+	})
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "User not found"})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"response": FormatUser(user, h.subPublicDomain),
+	})
+}
+
+func (h *Handler) GetUserByShortUuid(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	shortUuid := chi.URLParam(r, "shortUuid")
+	user, err := h.service.GetByShortUUID(shortUuid)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "User not found"})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"response": FormatUser(user, h.subPublicDomain),
+	})
+}
+
+func (h *Handler) GetUserByUsername(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	username := chi.URLParam(r, "username")
+	user, err := h.service.GetByUsername(username)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "User not found"})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"response": FormatUser(user, h.subPublicDomain),
+	})
+}
+
+func (h *Handler) ResolveUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var body struct {
+		ShortUUID string `json:"shortUuid"`
+		Username  string `json:"username"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	var user *database.User
+	var err error
+	if body.ShortUUID != "" {
+		user, err = h.service.GetByShortUUID(body.ShortUUID)
+	} else if body.Username != "" {
+		user, err = h.service.GetByUsername(body.Username)
+	}
+	if err != nil || user == nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "User not found"})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"response": map[string]interface{}{
+			"id": user.ID,
+		},
+	})
+}
+
+func (h *Handler) GetUsersStream(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	q := StreamQuery{}
+	if cStr := r.URL.Query().Get("cursor"); cStr != "" {
+		if c, err := strconv.ParseUint(cStr, 10, 64); err == nil {
+			q.Cursor = &c
+		}
+	}
+	if sStr := r.URL.Query().Get("size"); sStr != "" {
+		if s, err := strconv.Atoi(sStr); err == nil {
+			q.Size = s
+		}
+	}
+	if q.Size <= 0 {
+		q.Size = 250
+	}
+	if tgStr := r.URL.Query().Get("telegramId"); tgStr != "" {
+		if tg, err := strconv.ParseInt(tgStr, 10, 64); err == nil {
+			q.TelegramID = &tg
+		}
+	}
+	q.Status = r.URL.Query().Get("status")
+	q.TrafficLimitStrategy = r.URL.Query().Get("trafficLimitStrategy")
+	q.Email = r.URL.Query().Get("email")
+	q.Tag = r.URL.Query().Get("tag")
+	q.ExternalSquadUUID = r.URL.Query().Get("externalSquadUuid")
+
+	users, nextCursor, hasMore, err := h.service.GetStream(q)
+	if err != nil {
+		http.Error(w, `{"message":"Failed to fetch users stream"}`, http.StatusInternalServerError)
+		return
+	}
+
+	res := make([]map[string]interface{}, 0, len(users))
+	for _, u := range users {
+		res = append(res, FormatUser(u, h.subPublicDomain))
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"response": map[string]interface{}{
+			"users":      res,
+			"nextCursor": nextCursor,
+			"hasMore":    hasMore,
+		},
+	})
+}
+
+func (h *Handler) GetUserAccessibleNodes(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"response": []interface{}{},
+	})
+}
+
+func (h *Handler) GetUserSubscriptionRequestHistory(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"response": map[string]interface{}{
+			"records": []interface{}{},
+			"total":   0,
+		},
+	})
+}
+
+func (h *Handler) BulkExtendExpirationDate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserIDs    []uint64 `json:"userIds"`
+		ExtendDays int      `json:"extendDays"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"message":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.service.BulkExtendExpirationDate(body.UserIDs, body.ExtendDays); err != nil {
+		http.Error(w, `{"message":"Failed to extend expiration date"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) BulkAllExtendExpirationDate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ExtendDays int `json:"extendDays"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"message":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.service.BulkAllExtendExpirationDate(body.ExtendDays); err != nil {
+		http.Error(w, `{"message":"Failed to extend expiration date"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) BulkUpdate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserIDs []uint64               `json:"userIds"`
+		Fields  map[string]interface{} `json:"fields"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"message":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.service.BulkUpdate(body.UserIDs, body.Fields); err != nil {
+		http.Error(w, `{"message":"Failed to update users"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) BulkAllUpdate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Fields map[string]interface{} `json:"fields"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"message":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.service.BulkAllUpdate(body.Fields); err != nil {
+		http.Error(w, `{"message":"Failed to update users"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) BulkResetTraffic(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserIDs []uint64 `json:"userIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"message":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.service.BulkResetTraffic(body.UserIDs); err != nil {
+		http.Error(w, `{"message":"Failed to reset traffic"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) BulkAllResetTraffic(w http.ResponseWriter, r *http.Request) {
+	if err := h.service.BulkAllResetTraffic(); err != nil {
+		http.Error(w, `{"message":"Failed to reset traffic"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) BulkRevokeSubscription(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserIDs []uint64 `json:"userIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"message":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.service.BulkRevokeSubscription(body.UserIDs); err != nil {
+		http.Error(w, `{"message":"Failed to revoke subscription"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) BulkDelete(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserIDs []uint64 `json:"userIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"message":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.service.BulkDelete(body.UserIDs); err != nil {
+		http.Error(w, `{"message":"Failed to delete users"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) BulkDeleteByStatus(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"message":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.service.BulkDeleteByStatus(body.Status); err != nil {
+		http.Error(w, `{"message":"Failed to delete users by status"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) BulkUpdateSquads(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		UserIDs              []uint64 `json:"userIds"`
+		ActiveInternalSquads []string `json:"activeInternalSquads"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"message":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.service.BulkUpdateSquads(body.UserIDs, body.ActiveInternalSquads); err != nil {
+		http.Error(w, `{"message":"Failed to update user squads"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) BulkUserAction(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"response": map[string]interface{}{
+			"success": true,
+		},
+	})
+}
+
+func (h *Handler) PatchUser(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var body struct {
+		ID        *uint64 `json:"id"`
+		ShortUUID string  `json:"shortUuid"`
+		Username  string  `json:"username"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	var user *database.User
+	if body.ID != nil {
+		user, _ = h.service.GetByID(*body.ID)
+	} else if body.ShortUUID != "" {
+		user, _ = h.service.GetByShortUUID(body.ShortUUID)
+	} else if body.Username != "" {
+		user, _ = h.service.GetByUsername(body.Username)
+	}
+	if user == nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "User not found"})
+		return
+	}
+	json.NewEncoder(w).Encode(SingleUserResponse{Response: FormatUser(user, h.subPublicDomain)})
+}
