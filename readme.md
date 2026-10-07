@@ -243,6 +243,128 @@ nginx -t && systemctl reload nginx
 
 ---
 
+---
+
+## Подключение узлов (Remnanode)
+
+Для управления удаленными серверами и прокси-ядром Xray используется легковесный агент **Remnanode на Go**:
+
+👉 **[Репозиторий Remnanode-Go](https://github.com/aaaSaZaN/remnanode-go)**
+
+Инструкции по установке агента на ноды и привязке к панели описаны в репозитории ноды.
+
+---
+
+## Страница подписки (Subscription Page)
+
+**Subscription Page** — это клиентская страница для конечных пользователей (`https://sub.domain.com/<shortUuid>`). Она показывает инструкции по подключению, QR-коды для приложений (Happ, Sing-box, V2Ray, Clash, Shadowrocket) и **скрывает основной домен и IP панели** от блокировок и цензуры.
+
+Страницу подписки можно развернуть двумя способами:
+1. **Bundled** — на одном сервере вместе с панелью Gowave.
+2. **Separate Server** — на отдельном сервере/VPS (максимальная маскировка и безопасность).
+
+### Подготовка: получение API токена
+1. В панели Gowave откройте: **Settings ➔ API Tokens**.
+2. Создайте новый токен с правами для страницы подписки и скопируйте его.
+
+---
+
+### Вариант 1: Bundled (На одном сервере с панелью)
+
+1. В файле `/opt/gowave/.env` укажите домен вашей страницы подписок:
+   ```env
+   SUB_PUBLIC_DOMAIN=sub.yourdomain.com
+   ```
+   И перезапустите Gowave: `systemctl restart gowave`.
+
+2. Создайте каталог для страницы подписки:
+   ```bash
+   mkdir -p /opt/gowave-sub && cd /opt/gowave-sub
+   ```
+
+3. Создайте файл `docker-compose.yml`:
+   ```yaml
+   services:
+     gowave-subscription-page:
+       image: remnawave/subscription-page:latest
+       container_name: gowave-subpage
+       restart: always
+       ports:
+         - "127.0.0.1:3010:3010"
+       environment:
+         - APP_PORT=3010
+         - REMNAWAVE_PANEL_URL=http://127.0.0.1:3000
+         - REMNAWAVE_API_TOKEN=ВАШ_API_ТОКЕН_ИЗ_ПАНЕЛИ
+         - TRUST_PROXY=1
+   ```
+
+4. Запустите сервис:
+   ```bash
+   docker compose up -d
+   ```
+
+5. Настройте Reverse Proxy для домена подписок `sub.yourdomain.com`:
+
+   **Для Caddy** (допишите в `/etc/caddy/Caddyfile`):
+   ```caddy
+   sub.yourdomain.com {
+       encode zstd gzip
+       reverse_proxy 127.0.0.1:3010
+   }
+   ```
+   *Перезапуск: `systemctl reload caddy`*
+
+   **Для Nginx** (добавьте сервер в `/etc/nginx/sites-available/sub.conf`):
+   ```nginx
+   server {
+       listen 443 ssl http2;
+       server_name sub.yourdomain.com;
+
+       ssl_certificate /etc/letsencrypt/live/sub.yourdomain.com/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/sub.yourdomain.com/privkey.pem;
+
+       location / {
+           proxy_pass http://127.0.0.1:3010;
+           proxy_http_version 1.1;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+       }
+   }
+   ```
+
+---
+
+### Вариант 2: Separate Server (На отдельном сервере)
+
+Для того чтобы клиенты вообще не знали IP-адрес основного сервера панели:
+
+1. На **основном сервере** в `/opt/gowave/.env` укажите:
+   ```env
+   SUB_PUBLIC_DOMAIN=sub.yourdomain.com
+   ```
+
+2. На **отдельном сервере** создайте `docker-compose.yml`:
+   ```yaml
+   services:
+     gowave-subscription-page:
+       image: remnawave/subscription-page:latest
+       container_name: gowave-subpage
+       restart: always
+       ports:
+         - "127.0.0.1:3010:3010"
+       environment:
+         - APP_PORT=3010
+         - REMNAWAVE_PANEL_URL=https://panel.yourdomain.com
+         - REMNAWAVE_API_TOKEN=ВАШ_API_ТОКЕН_ИЗ_ПАНЕЛИ
+         - TRUST_PROXY=1
+   ```
+
+3. Запустите: `docker compose up -d` и настройте Caddy или Nginx на отдельном сервере, направив домен `sub.yourdomain.com` на `127.0.0.1:3010`.
+
+---
+
 ## Сборка из исходников (Для разработчиков)
 
 Если вы хотите собрать Gowave самостоятельно:
