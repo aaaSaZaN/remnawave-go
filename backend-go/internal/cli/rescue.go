@@ -31,6 +31,30 @@ func RunRescue(db *gorm.DB, cfg *config.Config, args []string) {
 		case "--print-secret-key":
 			PrintNodeSecretKey(db)
 			return
+		case "--import-pasarguard", "import-pasarguard":
+			source := ""
+			if len(args) > 1 {
+				source = args[1]
+			}
+			if err := ImportFromPasarGuard(db, source); err != nil {
+				fmt.Printf("[-] PasarGuard import failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "import":
+			source := ""
+			if len(args) > 1 && (args[1] == "pasarguard" || args[1] == "pasar") {
+				if len(args) > 2 {
+					source = args[2]
+				}
+			} else if len(args) > 1 {
+				source = args[1]
+			}
+			if err := ImportFromPasarGuard(db, source); err != nil {
+				fmt.Printf("[-] PasarGuard import failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "--help", "-h":
 			printUsage()
 			return
@@ -52,13 +76,16 @@ func PrintNodeSecretKey(db *gorm.DB) {
 
 func printUsage() {
 	fmt.Println("Usage: remnawave-server rescue [flag]")
+	fmt.Println("       remnawave-server import pasarguard [path/dsn]")
 	fmt.Println("       remnawave-server cli [flag]")
-	fmt.Println("\nAvailable flags:")
-	fmt.Println("  --reset-admin           Remove all admins to re-trigger first-time web onboarding")
-	fmt.Println("  --list-admins           List all existing administrators")
-	fmt.Println("  --enable-password-auth  Force-enable password authentication in database")
-	fmt.Println("  --print-secret-key      Generate and print a valid SECRET_KEY for remnanode")
-	fmt.Println("  --help, -h              Show this help message")
+	fmt.Println("\nAvailable commands / flags:")
+	fmt.Println("  --import-pasarguard [path]  Import users, traffic and HWIDs from PasarGuard (SQLite or Postgres)")
+	fmt.Println("  import pasarguard [path]    Import users, traffic and HWIDs from PasarGuard")
+	fmt.Println("  --reset-admin               Remove all admins to re-trigger first-time web onboarding")
+	fmt.Println("  --list-admins               List all existing administrators")
+	fmt.Println("  --enable-password-auth      Force-enable password authentication in database")
+	fmt.Println("  --print-secret-key          Generate and print a valid SECRET_KEY for remnanode")
+	fmt.Println("  --help, -h                  Show this help message")
 	fmt.Println("\nRun without flags to start the interactive rescue menu.")
 }
 
@@ -74,8 +101,9 @@ func interactiveMenu(db *gorm.DB, cfg *config.Config) {
 		fmt.Println("4) List all admins")
 		fmt.Println("5) Enable username/password authentication")
 		fmt.Println("6) Print node SECRET_KEY")
+		fmt.Println("7) Import database from PasarGuard (SQLite/PostgreSQL)")
 		fmt.Println("0) Exit")
-		fmt.Print("\nSelect an option [0-6]: ")
+		fmt.Print("\nSelect an option [0-7]: ")
 
 		input, err := reader.ReadString('\n')
 		if err != nil {
@@ -96,11 +124,13 @@ func interactiveMenu(db *gorm.DB, cfg *config.Config) {
 			EnablePasswordAuth(db)
 		case "6":
 			PrintNodeSecretKey(db)
+		case "7":
+			ImportPasarGuardInteractive(db, reader)
 		case "0", "q", "exit":
 			fmt.Println("Exiting Rescue CLI.")
 			return
 		default:
-			fmt.Println("Invalid option, please choose between 0 and 6.")
+			fmt.Println("Invalid option, please choose between 0 and 7.")
 		}
 	}
 }
