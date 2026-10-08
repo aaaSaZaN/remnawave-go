@@ -465,7 +465,7 @@ func (s *Service) SyncUserToNodes(user *database.User, prevVlessUUID *string) {
 			tagSet[t] = true
 		}
 
-		var matchedData []NodeUserInboundData
+		var matchedData []map[string]interface{}
 		if isActive {
 			for _, inb := range inbounds {
 				if !tagSet[inb.Tag] {
@@ -475,28 +475,39 @@ func (s *Service) SyncUserToNodes(user *database.User, prevVlessUUID *string) {
 				if inbType == "shadowsocks" && isSS2022(inb.RawInbound) {
 					inbType = "shadowsocks22"
 				}
-				flow := ""
-				uuidVal := ""
-				pwdVal := ""
+				uID := strconv.FormatUint(user.ID, 10)
 				switch inbType {
 				case "vless":
-					uuidVal = user.VlessUUID
-					flow = getVlessFlow(inb.Network, inb.Security, inb.RawInbound)
+					flow := getVlessFlow(inb.Network, inb.Security, inb.RawInbound)
+					matchedData = append(matchedData, map[string]interface{}{
+						"type":     "vless",
+						"tag":      inb.Tag,
+						"username": uID,
+						"uuid":     user.VlessUUID,
+						"flow":     flow,
+					})
 				case "hysteria":
-					pwdVal = user.VlessUUID
+					matchedData = append(matchedData, map[string]interface{}{
+						"type":     "hysteria",
+						"tag":      inb.Tag,
+						"username": uID,
+						"password": user.VlessUUID,
+					})
 				case "trojan":
-					pwdVal = user.TrojanPassword
+					matchedData = append(matchedData, map[string]interface{}{
+						"type":     "trojan",
+						"tag":      inb.Tag,
+						"username": uID,
+						"password": user.TrojanPassword,
+					})
 				case "shadowsocks", "shadowsocks22":
-					pwdVal = user.SsPassword
+					matchedData = append(matchedData, map[string]interface{}{
+						"type":     inbType,
+						"tag":      inb.Tag,
+						"username": uID,
+						"password": user.SsPassword,
+					})
 				}
-				matchedData = append(matchedData, NodeUserInboundData{
-					Type:     inbType,
-					Tag:      inb.Tag,
-					Username: strconv.FormatUint(user.ID, 10),
-					UUID:     uuidVal,
-					Password: pwdVal,
-					Flow:     flow,
-				})
 			}
 		}
 

@@ -480,8 +480,8 @@ type NodeUserHashData struct {
 }
 
 type AddUserRequestPayload struct {
-	HashData NodeUserHashData      `json:"hashData"`
-	Data     []NodeUserInboundData `json:"data"`
+	HashData NodeUserHashData         `json:"hashData"`
+	Data     []map[string]interface{} `json:"data"`
 }
 
 type RemoveUserRequestPayload struct {
