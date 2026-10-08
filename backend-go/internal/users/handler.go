@@ -132,23 +132,43 @@ func FormatUser(u *database.User, subPublicDomain string) map[string]interface{}
 func (h *Handler) GetUsers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	status := r.URL.Query().Get("status")
-	tag := r.URL.Query().Get("tag")
+	var query GetUsersQuery
+	query.Size = 25
 
-	usersList, err := h.service.GetAll(status, tag)
+	if s := r.URL.Query().Get("start"); s != "" {
+		if val, err := strconv.Atoi(s); err == nil && val >= 0 {
+			query.Start = val
+		}
+	}
+	if s := r.URL.Query().Get("size"); s != "" {
+		if val, err := strconv.Atoi(s); err == nil && val > 0 {
+			query.Size = val
+		}
+	}
+	query.Status = r.URL.Query().Get("status")
+	query.Tag = r.URL.Query().Get("tag")
+
+	if filtersStr := r.URL.Query().Get("filters"); filtersStr != "" {
+		_ = json.Unmarshal([]byte(filtersStr), &query.Filters)
+	}
+	if sortingStr := r.URL.Query().Get("sorting"); sortingStr != "" {
+		_ = json.Unmarshal([]byte(sortingStr), &query.Sorting)
+	}
+
+	usersList, total, err := h.service.GetAll(query)
 	if err != nil {
 		http.Error(w, `{"message":"Failed to fetch users"}`, http.StatusInternalServerError)
 		return
 	}
 
-	formatted := make([]map[string]interface{}, len(usersList))
-	for i, u := range usersList {
-		formatted[i] = FormatUser(u, h.subPublicDomain)
+	formatted := make([]map[string]interface{}, 0, len(usersList))
+	for _, u := range usersList {
+		formatted = append(formatted, FormatUser(u, h.subPublicDomain))
 	}
 
 	var resp UsersListResponse
 	resp.Response.Users = formatted
-	resp.Response.Total = len(usersList)
+	resp.Response.Total = int(total)
 
 	json.NewEncoder(w).Encode(resp)
 }

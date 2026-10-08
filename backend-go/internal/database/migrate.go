@@ -5,7 +5,7 @@ import (
 )
 
 func AutoMigrate(db *gorm.DB) error {
-	err := db.AutoMigrate(
+	models := []interface{}{
 		&Admin{},
 		&User{},
 		&UserTraffic{},
@@ -24,6 +24,8 @@ func AutoMigrate(db *gorm.DB) error {
 		&NodePlugin{},
 		&InternalSquad{},
 		&InternalSquadMember{},
+		&InternalSquadInbound{},
+		&ExternalSquadTemplate{},
 		&ExternalSquad{},
 		&InfraProvider{},
 		&InfraBillingNode{},
@@ -33,9 +35,20 @@ func AutoMigrate(db *gorm.DB) error {
 		&EntityMeta{},
 		&Keygen{},
 		&Passkey{},
-	)
-	if err != nil {
-		return err
+	}
+
+	if db.Dialector.Name() == "postgres" {
+		for _, m := range models {
+			if !db.Migrator().HasTable(m) {
+				if err := db.AutoMigrate(m); err != nil {
+					return err
+				}
+			}
+		}
+	} else {
+		if err := db.AutoMigrate(models...); err != nil {
+			return err
+		}
 	}
 
 	SeedDefaults(db)

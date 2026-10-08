@@ -67,7 +67,7 @@ func main() {
 	keygenSvc := keygen.NewService(db)
 	var nodeClient *nodes.Client
 	if km, err := keygenSvc.GetMasterKeygen(); err == nil {
-		nodeClient, _ = nodes.NewNodeClient([]byte(km.CACert), []byte(km.ClientCert), []byte(km.ClientKey), []byte(km.PrivKey))
+		nodeClient, _ = nodes.NewNodeClient([]byte(km.CACert), []byte(km.ClientCert), []byte(km.ClientKey), []byte(km.PrivKey), []byte(km.PubKey))
 	}
 	nodeService := nodes.NewService(db, nodeClient)
 	if nodeClient != nil {
@@ -83,7 +83,7 @@ func main() {
 	subtemplatesHandler := subtemplates.NewHandler(db)
 	tokensHandler := tokens.NewHandler(db, cfg.AppSecret)
 	infrabillingHandler := infrabilling.NewHandler(db)
-	stubHandler := stubs.NewHandler(db)
+	stubHandler := stubs.NewHandler(db, cfg.AppSecret, cfg.JWTLifetime, nodeClient)
 
 	r := chi.NewRouter()
 	r.Use(chimiddleware.StripSlashes)
@@ -98,6 +98,12 @@ func main() {
 	r.Post("/api/auth/login", authHandler.Login)
 	r.Post("/api/auth/register", authHandler.Register)
 
+	r.Get("/api/auth/passkey/authentication/options", stubHandler.GetPasskeyAuthOptions)
+	r.Post("/api/auth/passkey/authentication/verify", stubHandler.VerifyPasskeyAuth)
+	r.Post("/api/auth/oauth2/authorize", stubHandler.OAuth2Authorize)
+	r.Post("/api/auth/oauth2/callback", stubHandler.OAuth2Callback)
+	r.Post("/api/auth/oauth2/tg/callback", stubHandler.OAuth2TelegramCallback)
+
 	r.Get("/api/sub/{shortUuid}", subHandler.GetSubscription)
 	r.Get("/api/sub/{shortUuid}/info", subHandler.GetSubscriptionInfo)
 	r.Get("/api/sub/{shortUuid}/{clientType}", subHandler.GetSubscription)
@@ -111,8 +117,6 @@ func main() {
 		protected.Delete("/api/tokens/{uuid}", tokensHandler.DeleteApiToken)
 		protected.Get("/api/tokens/scopes", tokensHandler.GetScopes)
 		protected.Post("/api/tokens/ott", tokensHandler.GetOtt)
-		protected.Post("/api/subscriptions/subpage-config/{shortUuid}", subHandler.GetSubpageConfig)
-		protected.Get("/api/subscriptions/subpage-config/{shortUuid}", subHandler.GetSubpageConfig)
 
 		protected.Get("/api/subscription-settings", sysHandler.GetSubscriptionSettings)
 		protected.Patch("/api/subscription-settings", sysHandler.UpdateSubscriptionSettings)

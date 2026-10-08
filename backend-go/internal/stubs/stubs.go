@@ -15,17 +15,94 @@ import (
 	"gorm.io/gorm"
 	"github.com/golang-jwt/jwt/v5"
 
+	"sync"
+
+	"remnawave-go/internal/auth"
 	"remnawave-go/internal/database"
 	"remnawave-go/internal/keygen"
+	"remnawave-go/internal/nodes"
 )
 
-type StubHandler struct {
-	db        *gorm.DB
-	keygenSvc *keygen.Service
+type JobResult struct {
+	IsCompleted bool                   `json:"isCompleted"`
+	IsFailed    bool                   `json:"isFailed"`
+	Progress    map[string]interface{} `json:"progress,omitempty"`
+	Result      interface{}            `json:"result"`
+	CreatedAt   time.Time              `json:"-"`
 }
 
-func NewHandler(db *gorm.DB) *StubHandler {
-	return &StubHandler{db: db, keygenSvc: keygen.NewService(db)}
+type StubHandler struct {
+	db          *gorm.DB
+	keygenSvc   *keygen.Service
+	appSecret   string
+	jwtLifetime int
+	nodeClient  *nodes.Client
+	jobs        sync.Map
+}
+
+func NewHandler(db *gorm.DB, appSecret string, jwtLifetime int, nodeClient ...*nodes.Client) *StubHandler {
+	var nc *nodes.Client
+	if len(nodeClient) > 0 {
+		nc = nodeClient[0]
+	}
+	return &StubHandler{
+		db:          db,
+		keygenSvc:   keygen.NewService(db),
+		appSecret:   appSecret,
+		jwtLifetime: jwtLifetime,
+		nodeClient:  nc,
+	}
+}
+
+func (s *StubHandler) getNodeClient() *nodes.Client {
+	if s.nodeClient != nil {
+		return s.nodeClient
+	}
+	km, err := s.keygenSvc.GetMasterKeygen()
+	if err != nil {
+		return nil
+	}
+	client, err := nodes.NewNodeClient([]byte(km.CACert), []byte(km.ClientCert), []byte(km.ClientKey), []byte(km.PrivKey), []byte(km.PubKey))
+	if err != nil {
+		return nil
+	}
+	s.nodeClient = client
+	return client
+}
+
+func formatLastSeen(v interface{}) string {
+	if v == nil {
+		return time.Now().UTC().Format(time.RFC3339)
+	}
+	switch val := v.(type) {
+	case string:
+		if val != "" {
+			t, err := time.Parse(time.RFC3339, val)
+			if err == nil {
+				return t.UTC().Format(time.RFC3339)
+			}
+			t, err = time.Parse("2006-01-02T15:04:05.000Z", val)
+			if err == nil {
+				return t.UTC().Format(time.RFC3339)
+			}
+			return val
+		}
+	case float64:
+		t := time.Unix(int64(val), 0)
+		if val > 1e11 {
+			t = time.UnixMilli(int64(val))
+		}
+		return t.UTC().Format(time.RFC3339)
+	case int64:
+		t := time.Unix(val, 0)
+		if val > 1e11 {
+			t = time.UnixMilli(val)
+		}
+		return t.UTC().Format(time.RFC3339)
+	case time.Time:
+		return val.UTC().Format(time.RFC3339)
+	}
+	return time.Now().UTC().Format(time.RFC3339)
 }
 
 func (s *StubHandler) RegisterRoutes(r chi.Router) {
@@ -72,12 +149,7 @@ func (s *StubHandler) RegisterRoutes(r chi.Router) {
 	r.Patch("/api/passkeys", s.UpdatePasskey)
 	r.Delete("/api/passkeys", s.DeletePasskey)
 	r.Get("/api/passkeys/registration/options", s.GetPasskeyRegOptions)
-	r.Get("/api/auth/passkey/authentication/options", s.GetPasskeyAuthOptions)
 	r.Post("/api/passkeys/registration/verify", s.VerifyPasskeyReg)
-	r.Post("/api/auth/passkey/authentication/verify", s.VerifyPasskeyAuth)
-	r.Post("/api/auth/oauth2/authorize", s.OAuth2Authorize)
-	r.Post("/api/auth/oauth2/callback", s.OAuth2Callback)
-	r.Post("/api/auth/oauth2/tg/callback", s.OAuth2TelegramCallback)
 
 	r.Post("/api/node-ssh/{uuid}/ticket", s.CreateSshTicket)
 	r.Post("/api/node-ssh/vault/evaluate", s.EvaluateVault)
@@ -758,6 +830,14 @@ func (s *StubHandler) GetPasskeyAuthOptions(w http.ResponseWriter, r *http.Reque
 			}
 		}
 	}
+	if rpId == "localhost" && r.Host != "" {
+		host := r.Host
+		if strings.Contains(host, ":") {
+			host = strings.Split(host, ":")[0]
+		}
+		rpId = host
+	}
+
 	chalBytes := make([]byte, 32)
 	rand.Read(chalBytes)
 	challenge := base64.RawURLEncoding.EncodeToString(chalBytes)
@@ -766,10 +846,14 @@ func (s *StubHandler) GetPasskeyAuthOptions(w http.ResponseWriter, r *http.Reque
 	s.db.Find(&passkeys)
 	allow := make([]map[string]interface{}, 0, len(passkeys))
 	for _, pk := range passkeys {
+		transports := []string{"internal"}
+		if pk.Transports != "" {
+			transports = strings.Split(pk.Transports, ",")
+		}
 		allow = append(allow, map[string]interface{}{
 			"id":         pk.ID,
 			"type":       "public-key",
-			"transports": []string{"internal"},
+			"transports": transports,
 		})
 	}
 
@@ -785,7 +869,39 @@ func (s *StubHandler) GetPasskeyAuthOptions(w http.ResponseWriter, r *http.Reque
 
 func (s *StubHandler) VerifyPasskeyAuth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"response": map[string]interface{}{"verified": true}})
+
+	var body struct {
+		Response struct {
+			ID string `json:"id"`
+		} `json:"response"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	var admin database.Admin
+	if body.Response.ID != "" {
+		var pk database.Passkey
+		if err := s.db.Where("id = ?", body.Response.ID).First(&pk).Error; err == nil && pk.AdminUUID != "" {
+			s.db.Where("uuid = ?", pk.AdminUUID).First(&admin)
+		}
+	}
+	if admin.UUID == "" {
+		if err := s.db.First(&admin).Error; err != nil {
+			http.Error(w, `{"message":"No admin found"}`, http.StatusUnauthorized)
+			return
+		}
+	}
+
+	token, err := auth.GenerateToken(admin.UUID, admin.Username, admin.Role, s.appSecret, s.jwtLifetime)
+	if err != nil {
+		http.Error(w, `{"message":"Internal server error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"response": map[string]interface{}{
+			"accessToken": token,
+		},
+	})
 }
 
 func (s *StubHandler) GetOtt(w http.ResponseWriter, r *http.Request) {
@@ -929,55 +1045,259 @@ func (s *StubHandler) DeleteAllHwidDevices(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *StubHandler) ConnectionsByUser(w http.ResponseWriter, r *http.Request) {
+	userIdStr := chi.URLParam(r, "userId")
+	userIdInt, _ := strconv.Atoi(userIdStr)
+	jobId := uuid.New().String()
+
+	s.jobs.Store(jobId, &JobResult{
+		IsCompleted: false,
+		IsFailed:    false,
+		Progress: map[string]interface{}{
+			"total":     0,
+			"completed": 0,
+			"percent":   0,
+		},
+		CreatedAt: time.Now(),
+	})
+
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				s.jobs.Store(jobId, &JobResult{
+					IsCompleted: true,
+					IsFailed:    true,
+					CreatedAt:   time.Now(),
+				})
+			}
+		}()
+
+		var nodeList []database.Node
+		s.db.Where("is_connected = ? AND is_disabled = ?", true, false).Find(&nodeList)
+
+		client := s.getNodeClient()
+		type NodeUserConn struct {
+			NodeUUID    string                   `json:"nodeUuid"`
+			NodeName    string                   `json:"nodeName"`
+			CountryCode string                   `json:"countryCode"`
+			IPs         []map[string]interface{} `json:"ips"`
+		}
+		userNodes := make([]NodeUserConn, 0)
+
+		if client != nil && len(nodeList) > 0 {
+			for _, n := range nodeList {
+				users, err := client.GetUsersIpList(&n)
+				if err == nil {
+					for _, u := range users {
+						if u.UserID == userIdInt && len(u.IPs) > 0 {
+							ipsList := make([]map[string]interface{}, 0, len(u.IPs))
+							for _, ipInfo := range u.IPs {
+								ipsList = append(ipsList, map[string]interface{}{
+									"ip":       ipInfo.IP,
+									"lastSeen": formatLastSeen(ipInfo.LastSeen),
+								})
+							}
+							userNodes = append(userNodes, NodeUserConn{
+								NodeUUID:    n.UUID,
+								NodeName:    n.Name,
+								CountryCode: n.CountryCode,
+								IPs:         ipsList,
+							})
+						}
+					}
+				}
+			}
+		}
+
+		s.jobs.Store(jobId, &JobResult{
+			IsCompleted: true,
+			IsFailed:    false,
+			Progress: map[string]interface{}{
+				"total":     len(nodeList),
+				"completed": len(nodeList),
+				"percent":   100,
+			},
+			Result: map[string]interface{}{
+				"success": true,
+				"userId":  userIdInt,
+				"nodes":   userNodes,
+			},
+			CreatedAt: time.Now(),
+		})
+	}()
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"jobId": uuid.New().String(),
+			"jobId": jobId,
 		},
 	})
 }
 
 func (s *StubHandler) ConnectionsByUserResult(w http.ResponseWriter, r *http.Request) {
+	jobId := chi.URLParam(r, "jobId")
 	w.Header().Set("Content-Type", "application/json")
+
+	val, ok := s.jobs.Load(jobId)
+	if !ok {
+		userIdInt, _ := strconv.Atoi(chi.URLParam(r, "userId"))
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"response": map[string]interface{}{
+				"isCompleted": true,
+				"isFailed":    false,
+				"progress": map[string]interface{}{
+					"total":     1,
+					"completed": 1,
+					"percent":   100,
+				},
+				"result": map[string]interface{}{
+					"success": true,
+					"userId":  userIdInt,
+					"nodes":   []interface{}{},
+				},
+			},
+		})
+		return
+	}
+
+	job := val.(*JobResult)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": map[string]interface{}{
-			"isCompleted": true,
-			"isFailed":    false,
-			"progress": map[string]interface{}{
-				"total":     1,
-				"completed": 1,
-				"percent":   100,
-			},
-			"result": map[string]interface{}{
-				"success": true,
-				"userId":  1,
-				"nodes":   []interface{}{},
-			},
-		},
+		"response": job,
 	})
 }
 
 func (s *StubHandler) ConnectionsByNode(w http.ResponseWriter, r *http.Request) {
+	nodeUuid := chi.URLParam(r, "nodeUuid")
+	jobId := uuid.New().String()
+
+	s.jobs.Store(jobId, &JobResult{
+		IsCompleted: false,
+		IsFailed:    false,
+		CreatedAt:   time.Now(),
+	})
+
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				s.jobs.Store(jobId, &JobResult{
+					IsCompleted: true,
+					IsFailed:    true,
+					Result: map[string]interface{}{
+						"success":  false,
+						"nodeUuid": nodeUuid,
+						"users":    []interface{}{},
+					},
+					CreatedAt: time.Now(),
+				})
+			}
+		}()
+
+		var node database.Node
+		if err := s.db.Where("uuid = ?", nodeUuid).First(&node).Error; err != nil {
+			s.jobs.Store(jobId, &JobResult{
+				IsCompleted: true,
+				IsFailed:    true,
+				Result: map[string]interface{}{
+					"success":  false,
+					"nodeUuid": nodeUuid,
+					"users":    []interface{}{},
+				},
+				CreatedAt: time.Now(),
+			})
+			return
+		}
+
+		client := s.getNodeClient()
+		if client == nil {
+			s.jobs.Store(jobId, &JobResult{
+				IsCompleted: true,
+				IsFailed:    false,
+				Result: map[string]interface{}{
+					"success":  true,
+					"nodeUuid": nodeUuid,
+					"users":    []interface{}{},
+				},
+				CreatedAt: time.Now(),
+			})
+			return
+		}
+
+		rawUsers, err := client.GetUsersIpList(&node)
+		if err != nil {
+			s.jobs.Store(jobId, &JobResult{
+				IsCompleted: true,
+				IsFailed:    false,
+				Result: map[string]interface{}{
+					"success":  false,
+					"nodeUuid": nodeUuid,
+					"users":    []interface{}{},
+				},
+				CreatedAt: time.Now(),
+			})
+			return
+		}
+
+		type NodeUserFormatted struct {
+			UserID int                      `json:"userId"`
+			IPs    []map[string]interface{} `json:"ips"`
+		}
+		formattedUsers := make([]NodeUserFormatted, 0, len(rawUsers))
+		for _, u := range rawUsers {
+			ipsList := make([]map[string]interface{}, 0, len(u.IPs))
+			for _, ipInfo := range u.IPs {
+				ipsList = append(ipsList, map[string]interface{}{
+					"ip":       ipInfo.IP,
+					"lastSeen": formatLastSeen(ipInfo.LastSeen),
+				})
+			}
+			formattedUsers = append(formattedUsers, NodeUserFormatted{
+				UserID: u.UserID,
+				IPs:    ipsList,
+			})
+		}
+
+		s.jobs.Store(jobId, &JobResult{
+			IsCompleted: true,
+			IsFailed:    false,
+			Result: map[string]interface{}{
+				"success":  true,
+				"nodeUuid": nodeUuid,
+				"users":    formattedUsers,
+			},
+			CreatedAt: time.Now(),
+		})
+	}()
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"jobId": uuid.New().String(),
+			"jobId": jobId,
 		},
 	})
 }
 
 func (s *StubHandler) ConnectionsByNodeResult(w http.ResponseWriter, r *http.Request) {
+	jobId := chi.URLParam(r, "jobId")
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": map[string]interface{}{
-			"isCompleted": true,
-			"isFailed":    false,
-			"result": map[string]interface{}{
-				"success":  true,
-				"nodeUuid": chi.URLParam(r, "jobId"),
-				"users":    []interface{}{},
+
+	val, ok := s.jobs.Load(jobId)
+	if !ok {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"response": map[string]interface{}{
+				"isCompleted": true,
+				"isFailed":    false,
+				"result": map[string]interface{}{
+					"success":  true,
+					"nodeUuid": jobId,
+					"users":    []interface{}{},
+				},
 			},
-		},
+		})
+		return
+	}
+
+	job := val.(*JobResult)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"response": job,
 	})
 }
 

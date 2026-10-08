@@ -81,7 +81,16 @@ func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 			Title:               "Remnawave",
 			IsLoginAllowed:      true,
 			IsRegisterAllowed:   false,
-			PasswordAuthEnabled: true,
+			PasswordAuthEnabled: false,
+		}
+	} else {
+		if setting.PasswordSettings != "" && setting.PasswordSettings != "{}" {
+			var pw map[string]interface{}
+			if err := json.Unmarshal([]byte(setting.PasswordSettings), &pw); err == nil {
+				if en, ok := pw["enabled"].(bool); ok {
+					setting.PasswordAuthEnabled = en
+				}
+			}
 		}
 	}
 
@@ -112,6 +121,16 @@ func (h *Handler) GetStatus(w http.ResponseWriter, r *http.Request) {
 		"keycloak": false,
 		"generic":  false,
 		"telegram": false,
+	}
+	if setting.OAuth2Settings != "" && setting.OAuth2Settings != "{}" {
+		var oauth2 map[string]map[string]interface{}
+		if err := json.Unmarshal([]byte(setting.OAuth2Settings), &oauth2); err == nil {
+			for provider, data := range oauth2 {
+				if en, ok := data["enabled"].(bool); ok {
+					resp.Response.Authentication.OAuth2.Providers[provider] = en
+				}
+			}
+		}
 	}
 	title := setting.Title
 	if title == "" {

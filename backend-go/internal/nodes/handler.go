@@ -48,7 +48,7 @@ type UpdateNodeDTO struct {
 }
 
 func formatNodeResponse(db *gorm.DB, n *database.Node) map[string]interface{} {
-	var tags []string = []string{}
+	tags := []string{}
 	if n.Tags != "" {
 		_ = json.Unmarshal([]byte(n.Tags), &tags)
 	}
@@ -56,7 +56,7 @@ func formatNodeResponse(db *gorm.DB, n *database.Node) map[string]interface{} {
 		tags = []string{}
 	}
 
-	var integrationUuids []string = []string{}
+	integrationUuids := []string{}
 	if n.IntegrationUUIDs != "" {
 		_ = json.Unmarshal([]byte(n.IntegrationUUIDs), &integrationUuids)
 	}
@@ -64,7 +64,7 @@ func formatNodeResponse(db *gorm.DB, n *database.Node) map[string]interface{} {
 		integrationUuids = []string{}
 	}
 
-	var ips []string = []string{}
+	ips := []string{}
 	if n.IPs != "" {
 		_ = json.Unmarshal([]byte(n.IPs), &ips)
 	}
@@ -196,7 +196,7 @@ func (h *Handler) GetNodes(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetTags(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	var tags []string = []string{}
+	tags := []string{}
 	nodesList, _ := h.service.GetAll()
 	tagSet := make(map[string]bool)
 	for _, n := range nodesList {

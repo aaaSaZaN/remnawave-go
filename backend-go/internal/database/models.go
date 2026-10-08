@@ -34,7 +34,7 @@ type User struct {
 	Tag                    string          `gorm:"type:varchar(64);column:tag" json:"tag"`
 	TelegramID             *int64          `gorm:"column:telegram_id" json:"telegramId,omitempty"`
 	Email                  string          `gorm:"type:varchar(128);column:email" json:"email"`
-	HWIDDeviceLimit        *int            `gorm:"column:hwid_device_limit" json:"hwidDeviceLimit,omitempty"`
+	HWIDDeviceLimit        *int            `gorm:"type:integer;column:hwid_device_limit" json:"hwidDeviceLimit,omitempty"`
 	ExternalSquadUUID      *string         `gorm:"type:varchar(64);column:external_squad_uuid" json:"externalSquadUuid,omitempty"`
 	LastTriggeredThreshold int             `gorm:"default:0;column:last_triggered_threshold" json:"lastTriggeredThreshold"`
 	CreatedAt              time.Time       `gorm:"column:created_at" json:"createdAt"`
@@ -298,6 +298,25 @@ type InternalSquadMember struct {
 
 func (InternalSquadMember) TableName() string {
 	return "internal_squad_members"
+}
+
+type InternalSquadInbound struct {
+	InternalSquadUUID string `gorm:"primaryKey;column:internal_squad_uuid;type:varchar(64)" json:"internalSquadUuid"`
+	InboundUUID       string `gorm:"primaryKey;column:inbound_uuid;type:varchar(64)" json:"inboundUuid"`
+}
+
+func (InternalSquadInbound) TableName() string {
+	return "internal_squad_inbounds"
+}
+
+type ExternalSquadTemplate struct {
+	ExternalSquadUUID string `gorm:"primaryKey;column:external_squad_uuid;type:varchar(64)" json:"externalSquadUuid"`
+	TemplateType      string `gorm:"primaryKey;column:template_type;type:varchar(32)" json:"templateType"`
+	TemplateUUID      string `gorm:"column:template_uuid;type:varchar(64)" json:"templateUuid"`
+}
+
+func (ExternalSquadTemplate) TableName() string {
+	return "external_squads_templates"
 }
 
 

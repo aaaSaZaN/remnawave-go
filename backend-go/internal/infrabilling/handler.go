@@ -2,6 +2,7 @@ package infrabilling
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -21,7 +22,50 @@ func NewHandler(db *gorm.DB) *Handler {
 	return &Handler{db: db}
 }
 
-func formatProvider(p *database.InfraProvider) map[string]interface{} {
+func (h *Handler) formatProvider(p *database.InfraProvider) map[string]interface{} {
+	var hist struct {
+		TotalAmount float64
+		TotalBills  int64
+	}
+	h.db.Table("infra_billing_history").
+		Select("COALESCE(SUM(amount), 0) as total_amount, COUNT(uuid) as total_bills").
+		Where("provider_uuid = ?", p.UUID).
+		Scan(&hist)
+
+	type rawBillingNode struct {
+		Name        string  `gorm:"column:name"`
+		NodeName    *string `gorm:"column:node_name"`
+		NodeUUID    *string `gorm:"column:node_uuid"`
+		CountryCode *string `gorm:"column:country_code"`
+	}
+
+	var bNodes []rawBillingNode
+	h.db.Table("infra_billing_nodes as ibn").
+		Select("ibn.name as name, n.name as node_name, ibn.node_uuid as node_uuid, n.country_code as country_code").
+		Joins("LEFT JOIN nodes as n ON ibn.node_uuid = n.uuid").
+		Where("ibn.provider_uuid = ?", p.UUID).
+		Order("ibn.created_at ASC").
+		Scan(&bNodes)
+
+	billingNodesResp := make([]map[string]interface{}, 0, len(bNodes))
+	for _, bn := range bNodes {
+		displayName := bn.Name
+		if bn.NodeName != nil && *bn.NodeName != "" {
+			displayName = *bn.NodeName
+		}
+		var details interface{}
+		if bn.NodeUUID != nil && *bn.NodeUUID != "" && bn.CountryCode != nil && *bn.CountryCode != "" {
+			details = map[string]interface{}{
+				"nodeUuid":    *bn.NodeUUID,
+				"countryCode": *bn.CountryCode,
+			}
+		}
+		billingNodesResp = append(billingNodesResp, map[string]interface{}{
+			"name":    displayName,
+			"details": details,
+		})
+	}
+
 	return map[string]interface{}{
 		"uuid":        p.UUID,
 		"name":        p.Name,
@@ -29,6 +73,11 @@ func formatProvider(p *database.InfraProvider) map[string]interface{} {
 		"loginUrl":    p.LoginURL,
 		"createdAt":   p.CreatedAt.UTC().Format(time.RFC3339),
 		"updatedAt":   p.UpdatedAt.UTC().Format(time.RFC3339),
+		"billingHistory": map[string]interface{}{
+			"totalAmount": math.Round(hist.TotalAmount*100) / 100,
+			"totalBills":  hist.TotalBills,
+		},
+		"billingNodes": billingNodesResp,
 	}
 }
 
@@ -39,7 +88,7 @@ func (h *Handler) GetProviders(w http.ResponseWriter, r *http.Request) {
 
 	res := make([]map[string]interface{}, 0, len(providers))
 	for _, p := range providers {
-		res = append(res, formatProvider(&p))
+		res = append(res, h.formatProvider(&p))
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -61,12 +110,8 @@ func (h *Handler) GetProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := formatProvider(&p)
-	resp["billingHistory"] = []interface{}{}
-	resp["billingNodes"] = []interface{}{}
-
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": resp,
+		"response": h.formatProvider(&p),
 	})
 }
 
@@ -102,7 +147,7 @@ func (h *Handler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": formatProvider(&p),
+		"response": h.formatProvider(&p),
 	})
 }
 
@@ -146,7 +191,7 @@ func (h *Handler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": formatProvider(&p),
+		"response": h.formatProvider(&p),
 	})
 }
 

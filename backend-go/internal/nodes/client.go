@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"remnawave-go/internal/database"
@@ -24,16 +25,22 @@ type Client struct {
 	rsaPrivKey *rsa.PrivateKey
 }
 
-func NewNodeClient(caCertPEM, clientCertPEM, clientKeyPEM, jwtPrivKeyPEM []byte) (*Client, error) {
+func NewNodeClient(caCertPEM, clientCertPEM, clientKeyPEM, jwtPrivKeyPEM, jwtPubKeyPEM []byte) (*Client, error) {
 	var certPool *x509.CertPool
 	if len(caCertPEM) > 0 {
 		certPool = x509.NewCertPool()
 		certPool.AppendCertsFromPEM(caCertPEM)
 	}
 
+	var serverName string
+	if len(caCertPEM) > 0 && len(jwtPubKeyPEM) > 0 {
+		serverName = DeriveSNI(string(caCertPEM), string(jwtPubKeyPEM))
+	}
+
 	tlsConfig := &tls.Config{
 		MinVersion:         tls.VersionTLS13,
 		InsecureSkipVerify: true, // skip default IP hostname validation
+		ServerName:         serverName,
 	}
 
 	if certPool != nil {
@@ -52,11 +59,13 @@ func NewNodeClient(caCertPEM, clientCertPEM, clientKeyPEM, jwtPrivKeyPEM []byte)
 			}
 
 			opts := x509.VerifyOptions{
-				Roots:         certPool,
-				CurrentTime:   time.Now(),
-				Intermediates: x509.NewCertPool(),
+				Roots:       certPool,
+				CurrentTime: time.Now(),
 			}
 			for _, cert := range certs[1:] {
+				if opts.Intermediates == nil {
+					opts.Intermediates = x509.NewCertPool()
+				}
 				opts.Intermediates.AddCert(cert)
 			}
 
@@ -106,9 +115,12 @@ func (c *Client) generateToken() (string, error) {
 		return "", nil
 	}
 	claims := jwt.MapClaims{
-		"sub": "remnawave",
-		"iat": time.Now().Unix(),
-		"exp": time.Now().Add(1 * time.Hour).Unix(),
+		"uuid":     nil,
+		"username": nil,
+		"role":     "API",
+		"sub":      "remnawave",
+		"iat":      time.Now().Unix(),
+		"exp":      time.Now().Add(30 * 24 * time.Hour).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
 	return token.SignedString(c.rsaPrivKey)
@@ -132,6 +144,7 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body interfa
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
 
 	if token, err := c.generateToken(); err == nil && token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -150,7 +163,8 @@ func getNodePort(node *database.Node) int {
 func (c *Client) CheckHealth(node *database.Node) (bool, string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	url := fmt.Sprintf("https://%s:%d/node/xray/node-health-check", node.Address, getNodePort(node))
+	// Remnanode/TS endpoint is /node/xray/healthcheck
+	url := fmt.Sprintf("https://%s:%d/node/xray/healthcheck", node.Address, getNodePort(node))
 	resp, err := c.doRequest(ctx, "GET", url, nil)
 	if err != nil {
 		return false, err.Error(), err
@@ -198,6 +212,98 @@ func (c *Client) StopXray(node *database.Node) (bool, error) {
 	defer resp.Body.Close()
 
 	return resp.StatusCode == http.StatusOK, nil
+}
+
+type NodeUserIPInfo struct {
+	IP       string      `json:"ip"`
+	LastSeen interface{} `json:"lastSeen"`
+}
+
+type NodeUserSession struct {
+	UserID int              `json:"userId"`
+	IPs    []NodeUserIPInfo `json:"ips"`
+}
+
+func (c *Client) GetUsersIpList(node *database.Node) ([]NodeUserSession, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("https://%s:%d/node/stats/get-users-ip-list", node.Address, getNodePort(node))
+	resp, err := c.doRequest(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("node returned status %d", resp.StatusCode)
+	}
+
+	var res struct {
+		Response struct {
+			Users []struct {
+				UserID interface{}      `json:"userId"`
+				IPs    []NodeUserIPInfo `json:"ips"`
+			} `json:"users"`
+		} `json:"response"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+
+	var users []NodeUserSession
+	for _, u := range res.Response.Users {
+		var uid int
+		switch v := u.UserID.(type) {
+		case float64:
+			uid = int(v)
+		case string:
+			uid, _ = strconv.Atoi(v)
+		}
+		if uid > 0 {
+			users = append(users, NodeUserSession{
+				UserID: uid,
+				IPs:    u.IPs,
+			})
+		}
+	}
+	return users, nil
+}
+
+func (c *Client) GetUserIpList(node *database.Node, userID string) ([]NodeUserIPInfo, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("https://%s:%d/node/stats/get-user-ip-list", node.Address, getNodePort(node))
+	resp, err := c.doRequest(ctx, "POST", url, map[string]string{"userId": userID})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("node returned status %d", resp.StatusCode)
+	}
+
+	var res struct {
+		Response struct {
+			IPs []interface{} `json:"ips"`
+		} `json:"response"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+
+	var list []NodeUserIPInfo
+	for _, item := range res.Response.IPs {
+		switch v := item.(type) {
+		case string:
+			list = append(list, NodeUserIPInfo{IP: v, LastSeen: time.Now()})
+		case map[string]interface{}:
+			ip, _ := v["ip"].(string)
+			lastSeen := v["lastSeen"]
+			list = append(list, NodeUserIPInfo{IP: ip, LastSeen: lastSeen})
+		}
+	}
+	return list, nil
 }
 
 func (c *Client) GetLogs(node *database.Node, logType string, lines int) ([]string, error) {
@@ -249,7 +355,7 @@ func (c *Client) CheckUpdates(node *database.Node, repo string) (map[string]inte
 	}
 
 	var res struct {
-		Response map[string]interface{} 
+		Response map[string]interface{}
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return nil, err
@@ -272,7 +378,7 @@ func (c *Client) ApplyUpdate(node *database.Node, payload map[string]interface{}
 	}
 
 	var res struct {
-		Response map[string]interface{} 
+		Response map[string]interface{}
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 		return nil, err

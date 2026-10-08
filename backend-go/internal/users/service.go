@@ -2,6 +2,7 @@ package users
 
 import (
 	"crypto/rand"
+	"fmt"
 	"math/big"
 	"strconv"
 	"strings"
@@ -193,21 +194,178 @@ func (s *Service) Create(dto CreateUserDTO) (*database.User, error) {
 	return user, nil
 }
 
-func (s *Service) GetAll(status string, tag string) ([]*database.User, error) {
+type UserFilter struct {
+	ID    string      `json:"id"`
+	Value interface{} `json:"value"`
+}
+
+type UserSorting struct {
+	ID   string `json:"id"`
+	Desc bool   `json:"desc"`
+}
+
+type GetUsersQuery struct {
+	Start   int
+	Size    int
+	Status  string
+	Tag     string
+	Filters []UserFilter
+	Sorting []UserSorting
+}
+
+func (s *Service) GetAll(q GetUsersQuery) ([]*database.User, int64, error) {
+	dbQuery := s.db.Model(&database.User{}).Preload("Traffic")
+	countQuery := s.db.Model(&database.User{})
+
+	if q.Status != "" {
+		dbQuery = dbQuery.Where("users.status = ?", q.Status)
+		countQuery = countQuery.Where("users.status = ?", q.Status)
+	}
+	if q.Tag != "" {
+		dbQuery = dbQuery.Where("users.tag = ?", q.Tag)
+		countQuery = countQuery.Where("users.tag = ?", q.Tag)
+	}
+
+	for _, f := range q.Filters {
+		if f.ID == "" || f.Value == nil {
+			continue
+		}
+		switch f.ID {
+		case "status":
+			switch v := f.Value.(type) {
+			case []interface{}:
+				if len(v) > 0 {
+					var statuses []string
+					for _, item := range v {
+						if str, ok := item.(string); ok && str != "" {
+							statuses = append(statuses, str)
+						}
+					}
+					if len(statuses) > 0 {
+						dbQuery = dbQuery.Where("users.status IN ?", statuses)
+						countQuery = countQuery.Where("users.status IN ?", statuses)
+					}
+				}
+			case string:
+				if v != "" {
+					dbQuery = dbQuery.Where("users.status = ?", v)
+					countQuery = countQuery.Where("users.status = ?", v)
+				}
+			}
+		case "tag":
+			switch v := f.Value.(type) {
+			case []interface{}:
+				if len(v) > 0 {
+					var tags []string
+					for _, item := range v {
+						if str, ok := item.(string); ok && str != "" {
+							tags = append(tags, str)
+						}
+					}
+					if len(tags) > 0 {
+						dbQuery = dbQuery.Where("users.tag IN ?", tags)
+						countQuery = countQuery.Where("users.tag IN ?", tags)
+					}
+				}
+			case string:
+				if v != "" {
+					dbQuery = dbQuery.Where("users.tag = ?", v)
+					countQuery = countQuery.Where("users.tag = ?", v)
+				}
+			}
+		case "username":
+			if str, ok := f.Value.(string); ok && str != "" {
+				dbQuery = dbQuery.Where("LOWER(users.username) LIKE LOWER(?)", "%"+str+"%")
+				countQuery = countQuery.Where("LOWER(users.username) LIKE LOWER(?)", "%"+str+"%")
+			}
+		case "shortUuid":
+			if str, ok := f.Value.(string); ok && str != "" {
+				dbQuery = dbQuery.Where("LOWER(users.short_uuid) LIKE LOWER(?)", "%"+str+"%")
+				countQuery = countQuery.Where("LOWER(users.short_uuid) LIKE LOWER(?)", "%"+str+"%")
+			}
+		case "id":
+			valStr := fmt.Sprintf("%v", f.Value)
+			if valStr != "" {
+				dbQuery = dbQuery.Where("CAST(users.id AS TEXT) LIKE ?", "%"+valStr+"%")
+				countQuery = countQuery.Where("CAST(users.id AS TEXT) LIKE ?", "%"+valStr+"%")
+			}
+		case "email":
+			if str, ok := f.Value.(string); ok && str != "" {
+				dbQuery = dbQuery.Where("LOWER(users.email) LIKE LOWER(?)", "%"+str+"%")
+				countQuery = countQuery.Where("LOWER(users.email) LIKE LOWER(?)", "%"+str+"%")
+			}
+		case "description":
+			if str, ok := f.Value.(string); ok && str != "" {
+				dbQuery = dbQuery.Where("LOWER(users.description) LIKE LOWER(?)", "%"+str+"%")
+				countQuery = countQuery.Where("LOWER(users.description) LIKE LOWER(?)", "%"+str+"%")
+			}
+		case "telegramId":
+			valStr := fmt.Sprintf("%v", f.Value)
+			if valStr != "" {
+				dbQuery = dbQuery.Where("CAST(users.telegram_id AS TEXT) LIKE ?", "%"+valStr+"%")
+				countQuery = countQuery.Where("CAST(users.telegram_id AS TEXT) LIKE ?", "%"+valStr+"%")
+			}
+		}
+	}
+
+	var total int64
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	hasCustomSort := false
+	for _, sort := range q.Sorting {
+		col := ""
+		switch sort.ID {
+		case "id":
+			col = "users.id"
+		case "username":
+			col = "users.username"
+		case "status":
+			col = "users.status"
+		case "trafficLimitBytes":
+			col = "users.traffic_limit_bytes"
+		case "expireAt":
+			col = "users.expire_at"
+		case "createdAt":
+			col = "users.created_at"
+		case "updatedAt":
+			col = "users.updated_at"
+		case "tag":
+			col = "users.tag"
+		}
+		if col != "" {
+			dir := "ASC"
+			if sort.Desc {
+				dir = "DESC"
+			}
+			dbQuery = dbQuery.Order(fmt.Sprintf("%s %s", col, dir))
+			hasCustomSort = true
+		}
+	}
+	if !hasCustomSort {
+		dbQuery = dbQuery.Order("users.id DESC")
+	}
+
+	size := q.Size
+	if size <= 0 {
+		size = 25
+	}
+	if size > 1000 {
+		size = 1000
+	}
+	start := q.Start
+	if start < 0 {
+		start = 0
+	}
+
 	var users []*database.User
-	query := s.db.Preload("Traffic")
-	if status != "" {
-		query = query.Where("status = ?", status)
-	}
-	if tag != "" {
-		query = query.Where("tag = ?", tag)
-	}
-	err := query.Find(&users).Error
+	err := dbQuery.Offset(start).Limit(size).Find(&users).Error
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	_ = s.loadSquadsForUsers(users)
-	return users, nil
+	return users, total, nil
 }
 
 type StreamQuery struct {

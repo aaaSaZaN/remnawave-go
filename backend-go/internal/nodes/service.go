@@ -66,7 +66,7 @@ func (s *Service) StartNode(node *database.Node, force bool) (bool, error) {
 		return false, nil
 	}
 
-	var configMap map[string]interface{} = map[string]interface{}{}
+	configMap := map[string]interface{}{}
 	if node.ActiveConfigProfileUUID != nil && *node.ActiveConfigProfileUUID != "" {
 		var cp database.ConfigProfile
 		if err := s.db.Where("uuid = ?", *node.ActiveConfigProfileUUID).First(&cp).Error; err == nil {

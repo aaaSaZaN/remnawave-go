@@ -76,7 +76,7 @@ func (h *Handler) formatProfile(p *database.ConfigProfile) ProfileResponse {
 		cfg = map[string]interface{}{}
 	}
 
-	var tags []string = []string{}
+	tags := []string{}
 	if p.Tags != "" {
 		_ = json.Unmarshal([]byte(p.Tags), &tags)
 	}
@@ -121,7 +121,7 @@ func (h *Handler) formatProfile(p *database.ConfigProfile) ProfileResponse {
 
 func (h *Handler) GetConfigProfilesTags(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	var tags []string = []string{}
+	tags := []string{}
 	profiles, _ := h.service.GetAllProfiles()
 	tagSet := make(map[string]bool)
 	for _, p := range profiles {
