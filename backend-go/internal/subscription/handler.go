@@ -104,10 +104,17 @@ func (h *Handler) getHostsWithInboundsForUser(userID uint64) []XrayHostMeta {
 }
 
 func (h *Handler) getTemplateForUser(user *database.User, templateType string, overrideTemplateName string) string {
+	extractTmplContent := func(tmpl *database.SubscriptionTemplate) string {
+		if templateType == "XRAY_JSON" || templateType == "SINGBOX" {
+			return tmpl.TemplateJson
+		}
+		return tmpl.TemplateYaml
+	}
+
 	if overrideTemplateName != "" {
 		var tmpl database.SubscriptionTemplate
 		if err := h.db.Where("name = ? AND template_type = ?", overrideTemplateName, templateType).First(&tmpl).Error; err == nil {
-			return tmpl.TemplateJson
+			return extractTmplContent(&tmpl)
 		}
 	}
 
@@ -116,14 +123,14 @@ func (h *Handler) getTemplateForUser(user *database.User, templateType string, o
 		if err := h.db.Where("external_squad_uuid = ? AND template_type = ?", *user.ExternalSquadUUID, templateType).First(&squadTmpl).Error; err == nil {
 			var tmpl database.SubscriptionTemplate
 			if err := h.db.Where("uuid = ?", squadTmpl.TemplateUUID).First(&tmpl).Error; err == nil {
-				return tmpl.TemplateJson
+				return extractTmplContent(&tmpl)
 			}
 		}
 	}
 
 	var tmpl database.SubscriptionTemplate
 	if err := h.db.Where("template_type = ?", templateType).Order("view_position asc, created_at asc").First(&tmpl).Error; err == nil {
-		return tmpl.TemplateJson
+		return extractTmplContent(&tmpl)
 	}
 
 	return ""
@@ -143,20 +150,31 @@ func formatHeaderValue(val string, user *database.User) string {
 
 func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 	shortUUID := chi.URLParam(r, "shortUuid")
-	clientType := chi.URLParam(r, "clientType")
 
 	var user database.User
 	if err := h.db.Preload("Traffic").Where("short_uuid = ?", shortUUID).First(&user).Error; err != nil {
-		http.Error(w, `{"message":"Subscription not found"}`, http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"message":"Subscription not found"}`))
 		return
 	}
 
-	// Prepare request headers map for SRR matching
+	if user.Status != "ACTIVE" {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"message":"Account is disabled"}`))
+		return
+	}
+
+	// Prepare request headers for SRR
 	reqHeaders := make(map[string]string)
 	for k, v := range r.Header {
-		reqHeaders[strings.ToLower(k)] = strings.Join(v, ",")
+		if len(v) > 0 {
+			reqHeaders[strings.ToLower(k)] = v[0]
+		}
 	}
-	// Injected synthetic header
+
+	clientType := chi.URLParam(r, "clientType")
+	reqHeaders["x-remnawave-injected-client-type"] = clientType
+	reqHeaders["x-remnawave-injected-user-username"] = user.Username
 	reqHeaders["x-remnawave-injected-short-uuid"] = user.ShortUUID
 
 	// Load SubscriptionSetting
@@ -332,10 +350,19 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		body = jsonBody
-	} else if targetType == "MIHOMO" || targetType == "CLASH" {
+	} else if targetType == "MIHOMO" || targetType == "CLASH" || targetType == "STASH" {
 		contentType = "text/yaml; charset=utf-8"
-		hosts := h.getHostsForUser(user.ID)
-		body = h.generator.generateClashYAML(&user, hosts)
+		hostsMeta := h.getHostsWithInboundsForUser(user.ID)
+		tmplYAML := h.getTemplateForUser(&user, targetType, overrideTmpl)
+		if tmplYAML == "" && targetType != "MIHOMO" {
+			tmplYAML = h.getTemplateForUser(&user, "MIHOMO", overrideTmpl)
+		}
+		yamlBody, err := GenerateMihomoYAML(&user, hostsMeta, tmplYAML)
+		if err != nil {
+			http.Error(w, `{"message":"Failed to generate yaml config"}`, http.StatusInternalServerError)
+			return
+		}
+		body = yamlBody
 	} else if targetType == "SINGBOX" {
 		contentType = "application/json; charset=utf-8"
 		hosts := h.getHostsForUser(user.ID)

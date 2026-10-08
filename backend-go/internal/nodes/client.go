@@ -385,3 +385,80 @@ func (c *Client) ApplyUpdate(node *database.Node, payload map[string]interface{}
 	}
 	return res.Response, nil
 }
+
+type NodeUserTraffic struct {
+	Username string `json:"username"`
+	Uplink   int64  `json:"uplink"`
+	Downlink int64  `json:"downlink"`
+}
+
+type NodeSystemStatsResponse struct {
+	XrayInfo *struct {
+		Uptime       int64 `json:"uptime"`
+		NumGoroutine int   `json:"numGoroutine"`
+		Alloc        int64 `json:"alloc"`
+	} `json:"xrayInfo"`
+	System *struct {
+		Stats *struct {
+			MemoryFree uint64    `json:"memoryFree"`
+			MemoryUsed uint64    `json:"memoryUsed"`
+			Uptime     float64   `json:"uptime"`
+			LoadAvg    []float64 `json:"loadAvg"`
+			Interface  *struct {
+				Interface     string `json:"interface"`
+				RxBytesPerSec uint64 `json:"rxBytesPerSec"`
+				TxBytesPerSec uint64 `json:"txBytesPerSec"`
+				RxTotal       uint64 `json:"rxTotal"`
+				TxTotal       uint64 `json:"txTotal"`
+			} `json:"interface"`
+		} `json:"stats"`
+	} `json:"system"`
+}
+
+func (c *Client) GetSystemStats(node *database.Node) (*NodeSystemStatsResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("https://%s:%d/node/stats/get-system-stats", node.Address, getNodePort(node))
+	resp, err := c.doRequest(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("node returned status %d", resp.StatusCode)
+	}
+
+	var res struct {
+		Response NodeSystemStatsResponse `json:"response"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	return &res.Response, nil
+}
+
+func (c *Client) GetUsersStats(node *database.Node, reset bool) ([]NodeUserTraffic, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("https://%s:%d/node/stats/get-users-stats", node.Address, getNodePort(node))
+	resp, err := c.doRequest(ctx, "POST", url, map[string]bool{"reset": reset})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("node returned status %d", resp.StatusCode)
+	}
+
+	var res struct {
+		Response struct {
+			Users []NodeUserTraffic `json:"users"`
+		} `json:"response"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	return res.Response.Users, nil
+}

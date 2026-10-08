@@ -11,7 +11,6 @@ import (
 	"remnawave-go/internal/database"
 
 	"github.com/go-chi/chi/v5"
-	"gorm.io/gorm"
 )
 
 type Handler struct {
@@ -47,7 +46,8 @@ type UpdateNodeDTO struct {
 	IPs              *[]string `json:"ips"`
 }
 
-func formatNodeResponse(db *gorm.DB, n *database.Node) map[string]interface{} {
+func formatNodeResponse(service *Service, n *database.Node) map[string]interface{} {
+	db := service.DB()
 	tags := []string{}
 	if n.Tags != "" {
 		_ = json.Unmarshal([]byte(n.Tags), &tags)
@@ -137,6 +137,48 @@ func formatNodeResponse(db *gorm.DB, n *database.Node) map[string]interface{} {
 		statusMsg = nil
 	}
 
+	var systemObj interface{} = nil
+	var versionsObj interface{} = nil
+	xrayUptime := int64(0)
+	usersOnline := 0
+
+	metrics := service.GetNodeMetrics(n.UUID)
+	if metrics != nil {
+		usersOnline = metrics.OnlineUsers
+		xrayUptime = metrics.XrayUptime
+		if metrics.Versions != nil {
+			versionsObj = metrics.Versions
+		}
+		if metrics.System != nil && metrics.System.System != nil && metrics.System.System.Stats != nil {
+			st := metrics.System.System.Stats
+			memTotal := uint64(0)
+			if st.MemoryFree > 0 || st.MemoryUsed > 0 {
+				memTotal = st.MemoryFree + st.MemoryUsed
+			}
+			systemObj = map[string]interface{}{
+				"info": map[string]interface{}{
+					"arch":              "x64",
+					"cpus":              2,
+					"cpuModel":          "CPU",
+					"memoryTotal":       memTotal,
+					"hostname":          n.Name,
+					"platform":          "linux",
+					"release":           "linux",
+					"type":              "Linux",
+					"version":           "1.0",
+					"networkInterfaces": []string{"eth0"},
+				},
+				"stats": map[string]interface{}{
+					"memoryFree": st.MemoryFree,
+					"memoryUsed": st.MemoryUsed,
+					"uptime":     uint64(st.Uptime),
+					"loadAvg":    st.LoadAvg,
+					"interface":  st.Interface,
+				},
+			}
+		}
+	}
+
 	return map[string]interface{}{
 		"uuid":                      n.UUID,
 		"id":                        n.ID,
@@ -167,10 +209,10 @@ func formatNodeResponse(db *gorm.DB, n *database.Node) map[string]interface{} {
 		"providerUuid":              n.ProviderUUID,
 		"provider":                  nil,
 		"activePluginUuid":          n.ActivePluginUUID,
-		"system":                    nil,
-		"versions":                  nil,
-		"xrayUptime":                0,
-		"usersOnline":               0,
+		"system":                    systemObj,
+		"versions":                  versionsObj,
+		"xrayUptime":                xrayUptime,
+		"usersOnline":               usersOnline,
 		"note":                      n.Note,
 	}
 }
@@ -186,7 +228,7 @@ func (h *Handler) GetNodes(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]map[string]interface{}, 0, len(nodesList))
 	for _, n := range nodesList {
-		resp = append(resp, formatNodeResponse(h.service.DB(), &n))
+		resp = append(resp, formatNodeResponse(h.service, &n))
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -237,7 +279,7 @@ func (h *Handler) CreateNode(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": formatNodeResponse(h.service.DB(), node),
+		"response": formatNodeResponse(h.service, node),
 	})
 }
 
@@ -253,7 +295,7 @@ func (h *Handler) GetNode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": formatNodeResponse(h.service.DB(), node),
+		"response": formatNodeResponse(h.service, node),
 	})
 }
 
@@ -366,7 +408,7 @@ func (h *Handler) handleUpdateNode(w http.ResponseWriter, r *http.Request, targe
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": formatNodeResponse(h.service.DB(), node),
+		"response": formatNodeResponse(h.service, node),
 	})
 }
 
@@ -401,7 +443,7 @@ func (h *Handler) EnableNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": formatNodeResponse(h.service.DB(), node),
+		"response": formatNodeResponse(h.service, node),
 	})
 }
 
@@ -415,7 +457,7 @@ func (h *Handler) DisableNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": formatNodeResponse(h.service.DB(), node),
+		"response": formatNodeResponse(h.service, node),
 	})
 }
 
@@ -429,7 +471,7 @@ func (h *Handler) ResetTraffic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": formatNodeResponse(h.service.DB(), node),
+		"response": formatNodeResponse(h.service, node),
 	})
 }
 

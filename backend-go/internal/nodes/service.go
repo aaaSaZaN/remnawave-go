@@ -3,6 +3,8 @@ package nodes
 import (
 	"context"
 	"encoding/json"
+	"strconv"
+	"sync"
 	"time"
 
 	"remnawave-go/internal/database"
@@ -11,13 +13,44 @@ import (
 	"gorm.io/gorm"
 )
 
+type NodeHotMetrics struct {
+	System      *NodeSystemStatsResponse `json:"system"`
+	Versions    *NodeVersionsResponse    `json:"versions"`
+	XrayUptime  int64                    `json:"xrayUptime"`
+	OnlineUsers int                      `json:"usersOnline"`
+	LastSeen    time.Time                `json:"lastSeen"`
+}
+
+type NodeVersionsResponse struct {
+	Xray string `json:"xray"`
+	Node string `json:"node"`
+}
+
 type Service struct {
-	db     *gorm.DB
-	client *Client
+	db          *gorm.DB
+	client      *Client
+	metricsMu   sync.RWMutex
+	nodeMetrics map[string]*NodeHotMetrics
 }
 
 func NewService(db *gorm.DB, client *Client) *Service {
-	return &Service{db: db, client: client}
+	return &Service{
+		db:          db,
+		client:      client,
+		nodeMetrics: make(map[string]*NodeHotMetrics),
+	}
+}
+
+func (s *Service) GetNodeMetrics(nodeUUID string) *NodeHotMetrics {
+	s.metricsMu.RLock()
+	defer s.metricsMu.RUnlock()
+	return s.nodeMetrics[nodeUUID]
+}
+
+func (s *Service) SetNodeMetrics(nodeUUID string, m *NodeHotMetrics) {
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	s.nodeMetrics[nodeUUID] = m
 }
 
 func (s *Service) DB() *gorm.DB {
@@ -107,18 +140,125 @@ func (s *Service) StartNode(node *database.Node, force bool) (bool, error) {
 	return ok, err
 }
 
+func (s *Service) PollNodeStats(node *database.Node) {
+	if s.client == nil || !node.IsConnected {
+		return
+	}
+
+	metrics := s.GetNodeMetrics(node.UUID)
+	if metrics == nil {
+		metrics = &NodeHotMetrics{}
+	}
+
+	// 1. Fetch system stats
+	sysStats, err := s.client.GetSystemStats(node)
+	if err == nil && sysStats != nil {
+		metrics.System = sysStats
+		if sysStats.XrayInfo != nil {
+			metrics.XrayUptime = sysStats.XrayInfo.Uptime
+		}
+	}
+
+	// 2. Fetch users stats (traffic delta)
+	usersTraffic, err := s.client.GetUsersStats(node, true)
+	if err == nil {
+		now := time.Now().UTC()
+		activeCount := 0
+
+		for _, ut := range usersTraffic {
+			delta := ut.Uplink + ut.Downlink
+			if delta <= 0 {
+				continue
+			}
+			activeCount++
+
+			// Apply node consumption multiplier (stored as nano: 1.0 = 1,000,000,000)
+			mult := node.ConsumptionMultiplier
+			if mult >= 1000000 {
+				mult = mult / 1000000000.0
+			}
+			if mult <= 0 {
+				mult = 1.0
+			}
+			incTraffic := uint64(float64(delta) * mult)
+
+			uid, err := strconv.ParseInt(ut.Username, 10, 64)
+			if err != nil || uid <= 0 {
+				continue
+			}
+
+			// Update user_traffic in database (ut.Username is the user ID string)
+			s.db.Exec(`
+				UPDATE user_traffic
+				SET
+					used_traffic_bytes = used_traffic_bytes + ?,
+					lifetime_used_traffic_bytes = lifetime_used_traffic_bytes + ?,
+					online_at = ?,
+					first_connected_at = COALESCE(first_connected_at, ?),
+					last_connected_node_uuid = ?
+				WHERE id = ?
+			`, incTraffic, incTraffic, now, now, node.UUID, uid)
+		}
+
+		if len(usersTraffic) > 0 {
+			metrics.OnlineUsers = activeCount
+		}
+	}
+
+	// 3. If online users is still 0, check active IP sessions for accuracy
+	if metrics.OnlineUsers == 0 {
+		sessions, err := s.client.GetUsersIpList(node)
+		if err == nil && len(sessions) > 0 {
+			metrics.OnlineUsers = len(sessions)
+			now := time.Now().UTC()
+			for _, sess := range sessions {
+				if len(sess.IPs) > 0 {
+					s.db.Exec(`
+						UPDATE user_traffic
+						SET online_at = ?,
+						    last_connected_node_uuid = ?
+						WHERE id = ?
+					`, now, node.UUID, sess.UserID)
+				}
+			}
+		}
+	}
+
+	metrics.LastSeen = time.Now()
+	s.SetNodeMetrics(node.UUID, metrics)
+}
+
 func (s *Service) StartHealthCheckLoop(ctx context.Context) {
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
+	healthTicker := time.NewTicker(30 * time.Second)
+	statsTicker := time.NewTicker(5 * time.Second)
+	defer healthTicker.Stop()
+	defer statsTicker.Stop()
+
+	// Initial run
+	var nodes []database.Node
+	if err := s.db.Where("is_disabled = ?", false).Find(&nodes).Error; err == nil {
+		for _, n := range nodes {
+			s.CheckNodeHealth(&n)
+			s.PollNodeStats(&n)
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-healthTicker.C:
 			var nodes []database.Node
 			if err := s.db.Where("is_disabled = ?", false).Find(&nodes).Error; err == nil {
 				for _, n := range nodes {
 					s.CheckNodeHealth(&n)
+				}
+			}
+		case <-statsTicker.C:
+			var nodes []database.Node
+			if err := s.db.Where("is_disabled = ? AND is_connected = ?", false, true).Find(&nodes).Error; err == nil {
+				for _, n := range nodes {
+					go s.PollNodeStats(&n)
 				}
 			}
 		}
