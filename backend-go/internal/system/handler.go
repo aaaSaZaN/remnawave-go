@@ -104,9 +104,9 @@ type NodesStatisticsResponse struct {
 }
 
 type NodeDayStat struct {
-	NodeName   string `json:"nodeName"`
-	Date       string `json:"date"`
-	TotalBytes string `json:"totalBytes"`
+	NodeName   string `json:"nodeName" gorm:"column:node_name"`
+	Date       string `json:"date" gorm:"column:date"`
+	TotalBytes string `json:"totalBytes" gorm:"column:total_bytes"`
 }
 
 type NodesMetricsResponse struct {
@@ -144,7 +144,8 @@ type RecapResponse struct {
 			NodesCpuCores     int    `json:"nodesCpuCores"`
 			DistinctCountries int    `json:"distinctCountries"`
 		} `json:"total"`
-		Version string `json:"version"`
+		Version  string `json:"version"`
+		InitDate string `json:"initDate"`
 	} `json:"response"`
 }
 
@@ -171,6 +172,47 @@ type MetadataResponse struct {
 			} `json:"frontend"`
 		} `json:"git"`
 	} `json:"response"`
+}
+
+func formatPrettyBytes(b int64) string {
+	if b == 0 {
+		return "0"
+	}
+	isNeg := b < 0
+	if isNeg {
+		b = -b
+	}
+	var res string
+	const unit = 1024
+	if b < unit {
+		res = fmt.Sprintf("%.2f B", float64(b))
+	} else {
+		div, exp := int64(unit), 0
+		units := []string{"KiB", "MiB", "GiB", "TiB", "PiB"}
+		for n := b / unit; n >= unit && exp < len(units)-1; n /= unit {
+			div *= unit
+			exp++
+		}
+		val := float64(b) / float64(div)
+		res = fmt.Sprintf("%.2f %s", val, units[exp])
+	}
+	if isNeg {
+		return "-" + res
+	}
+	return res
+}
+
+func calcBaseStat(cur, prev int64) BaseStat {
+	diff := cur - prev
+	diffStr := "0"
+	if diff != 0 {
+		diffStr = formatPrettyBytes(diff)
+	}
+	return BaseStat{
+		Current:    formatPrettyBytes(cur),
+		Previous:   formatPrettyBytes(prev),
+		Difference: diffStr,
+	}
 }
 
 func (h *Handler) GetMetadata(w http.ResponseWriter, r *http.Request) {
@@ -339,8 +381,28 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 		statusCounts[u.Status]++
 	}
 
-	var nodes []database.Node
-	h.db.Find(&nodes)
+	type OnlineStatsResult struct {
+		OnlineNow   int
+		LastDay     int
+		LastWeek    int
+		NeverOnline int
+	}
+	var osr OnlineStatsResult
+	h.db.Raw(`
+SELECT
+    COUNT(*) FILTER (WHERE ut.online_at >= NOW() - INTERVAL '30 seconds') AS online_now,
+    COUNT(*) FILTER (WHERE ut.online_at >= NOW() - INTERVAL '1 day') AS last_day,
+    COUNT(*) FILTER (WHERE ut.online_at >= NOW() - INTERVAL '1 week') AS last_week,
+    COUNT(*) FILTER (WHERE ut.online_at IS NULL) AS never_online
+FROM users u
+LEFT JOIN user_traffic ut ON ut.id = u.id;
+`).Scan(&osr)
+
+	var totalBytesLifetime string
+	h.db.Raw(`SELECT COALESCE(SUM(total_bytes), 0)::text FROM nodes_usage_history`).Scan(&totalBytesLifetime)
+	if totalBytesLifetime == "" {
+		totalBytesLifetime = "0"
+	}
 
 	var resp SystemStatsResponse
 	resp.Response.Cpu.Cores = runtime.NumCPU()
@@ -353,13 +415,13 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 	resp.Response.Users.StatusCounts = statusCounts
 	resp.Response.Users.TotalUsers = len(users)
 
-	resp.Response.OnlineStats.LastDay = 0
-	resp.Response.OnlineStats.LastWeek = 0
-	resp.Response.OnlineStats.NeverOnline = len(users)
-	resp.Response.OnlineStats.OnlineNow = 0
+	resp.Response.OnlineStats.LastDay = osr.LastDay
+	resp.Response.OnlineStats.LastWeek = osr.LastWeek
+	resp.Response.OnlineStats.NeverOnline = osr.NeverOnline
+	resp.Response.OnlineStats.OnlineNow = osr.OnlineNow
 
-	resp.Response.Nodes.TotalOnline = len(nodes)
-	resp.Response.Nodes.TotalBytesLifetime = "0"
+	resp.Response.Nodes.TotalOnline = osr.OnlineNow
+	resp.Response.Nodes.TotalBytesLifetime = totalBytesLifetime
 
 	json.NewEncoder(w).Encode(resp)
 }
@@ -367,18 +429,66 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetBandwidthStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	zeroStat := BaseStat{
-		Current:    "0",
-		Previous:   "0",
-		Difference: "0",
+	tzStr := r.URL.Query().Get("tz")
+	loc, err := time.LoadLocation(tzStr)
+	if err != nil {
+		loc = time.UTC
 	}
 
+	now := time.Now().In(loc)
+
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).UTC()
+	todayEnd := time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, loc).UTC()
+	yesterdayStart := todayStart.AddDate(0, 0, -1)
+	yesterdayEnd := todayEnd.AddDate(0, 0, -1)
+
+	last7Start := todayStart.AddDate(0, 0, -6)
+	last7End := todayEnd
+	prev7Start := last7Start.AddDate(0, 0, -7)
+	prev7End := todayEnd.AddDate(0, 0, -7)
+
+	last30Start := todayStart.AddDate(0, 0, -29)
+	last30End := todayEnd
+	prev30Start := last30Start.AddDate(0, 0, -30)
+	prev30End := todayEnd.AddDate(0, 0, -30)
+
+	curMonthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc).UTC()
+	curMonthEnd := todayEnd
+	prevMonthStart := curMonthStart.AddDate(0, -1, 0)
+	prevMonthEnd := curMonthStart.Add(-time.Nanosecond)
+
+	curYearStart := time.Date(now.Year(), 1, 1, 0, 0, 0, 0, loc).UTC()
+	curYearEnd := todayEnd
+	prevYearStart := curYearStart.AddDate(-1, 0, 0)
+	prevYearEnd := curYearStart.Add(-time.Nanosecond)
+
+	getUsage := func(start, end time.Time) int64 {
+		var total int64
+		h.db.Raw("SELECT COALESCE(SUM(total_bytes), 0) FROM nodes_usage_history WHERE created_at >= ? AND created_at <= ?", start, end).Scan(&total)
+		return total
+	}
+
+	todayUsage := getUsage(todayStart, todayEnd)
+	yesterdayUsage := getUsage(yesterdayStart, yesterdayEnd)
+
+	last7Usage := getUsage(last7Start, last7End)
+	prev7Usage := getUsage(prev7Start, prev7End)
+
+	last30Usage := getUsage(last30Start, last30End)
+	prev30Usage := getUsage(prev30Start, prev30End)
+
+	curMonthUsage := getUsage(curMonthStart, curMonthEnd)
+	prevMonthUsage := getUsage(prevMonthStart, prevMonthEnd)
+
+	curYearUsage := getUsage(curYearStart, curYearEnd)
+	prevYearUsage := getUsage(prevYearStart, prevYearEnd)
+
 	var resp BandwidthStatsResponse
-	resp.Response.BandwidthLastTwoDays = zeroStat
-	resp.Response.BandwidthLastSevenDays = zeroStat
-	resp.Response.BandwidthLast30Days = zeroStat
-	resp.Response.BandwidthCalendarMonth = zeroStat
-	resp.Response.BandwidthCurrentYear = zeroStat
+	resp.Response.BandwidthLastTwoDays = calcBaseStat(todayUsage, yesterdayUsage)
+	resp.Response.BandwidthLastSevenDays = calcBaseStat(last7Usage, prev7Usage)
+	resp.Response.BandwidthLast30Days = calcBaseStat(last30Usage, prev30Usage)
+	resp.Response.BandwidthCalendarMonth = calcBaseStat(curMonthUsage, prevMonthUsage)
+	resp.Response.BandwidthCurrentYear = calcBaseStat(curYearUsage, prevYearUsage)
 
 	json.NewEncoder(w).Encode(resp)
 }
@@ -386,8 +496,30 @@ func (h *Handler) GetBandwidthStats(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetNodesStatistics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
+	var rows []NodeDayStat
+	h.db.Raw(`
+SELECT
+    n.name as "node_name",
+    COALESCE(SUM(nu.total_bytes), 0)::text AS "total_bytes",
+    DATE_TRUNC('day', nu.created_at)::date::text AS "date"
+FROM
+    nodes_usage_history AS nu
+JOIN
+    nodes AS n ON nu.node_uuid = n.uuid
+WHERE
+    nu.created_at >= NOW() - INTERVAL '7 days'
+GROUP BY
+    n.name, DATE_TRUNC('day', nu.created_at)::date
+ORDER BY
+    "date" ASC;
+`).Scan(&rows)
+
+	if rows == nil {
+		rows = []NodeDayStat{}
+	}
+
 	var resp NodesStatisticsResponse
-	resp.Response.LastSevenDays = []NodeDayStat{}
+	resp.Response.LastSevenDays = rows
 	json.NewEncoder(w).Encode(resp)
 }
 
@@ -402,22 +534,49 @@ func (h *Handler) GetNodesMetrics(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetRecap(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	var userCount int64
-	h.db.Model(&database.User{}).Count(&userCount)
+	var totalUsers int64
+	var newUsersThisMonth int64
+	h.db.Raw(`
+SELECT
+    COUNT(*) AS total_users,
+    COUNT(*) FILTER (WHERE created_at >= date_trunc('month', NOW())) AS new_users_this_month
+FROM users;
+`).Row().Scan(&totalUsers, &newUsersThisMonth)
 
-	var nodeCount int64
-	h.db.Model(&database.Node{}).Count(&nodeCount)
+	var thisMonthTraffic string
+	var totalTraffic string
+	h.db.Raw(`
+SELECT
+    COALESCE(SUM(total_bytes) FILTER (WHERE created_at >= date_trunc('month', NOW())), 0)::text AS this_month_traffic,
+    COALESCE(SUM(total_bytes), 0)::text AS total_traffic
+FROM nodes_usage_history;
+`).Row().Scan(&thisMonthTraffic, &totalTraffic)
+
+	var totalNodes int64
+	var distinctCountries int64
+	h.db.Raw(`
+SELECT
+    COUNT(*) AS total_nodes,
+    COUNT(DISTINCT country_code) FILTER (WHERE country_code IS NOT NULL AND country_code != '' AND country_code != 'XX') AS distinct_countries
+FROM nodes;
+`).Row().Scan(&totalNodes, &distinctCountries)
+
+	var initDate time.Time
+	if err := h.db.Raw(`SELECT started_at FROM _prisma_migrations ORDER BY started_at ASC LIMIT 1`).Scan(&initDate).Error; err != nil || initDate.IsZero() {
+		initDate = startTime
+	}
 
 	var resp RecapResponse
-	resp.Response.ThisMonth.Users = int(userCount)
-	resp.Response.ThisMonth.Traffic = "0 B"
-	resp.Response.Total.Users = int(userCount)
-	resp.Response.Total.Nodes = int(nodeCount)
-	resp.Response.Total.Traffic = "0 B"
+	resp.Response.ThisMonth.Users = int(newUsersThisMonth)
+	resp.Response.ThisMonth.Traffic = thisMonthTraffic
+	resp.Response.Total.Users = int(totalUsers)
+	resp.Response.Total.Nodes = int(totalNodes)
+	resp.Response.Total.Traffic = totalTraffic
 	resp.Response.Total.NodesRam = "0 B"
 	resp.Response.Total.NodesCpuCores = 0
-	resp.Response.Total.DistinctCountries = 0
+	resp.Response.Total.DistinctCountries = int(distinctCountries)
 	resp.Response.Version = "3.4.15"
+	resp.Response.InitDate = initDate.UTC().Format(time.RFC3339)
 
 	json.NewEncoder(w).Encode(resp)
 }

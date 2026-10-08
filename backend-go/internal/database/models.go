@@ -78,8 +78,8 @@ type Node struct {
 	TrafficResetDay           int        `gorm:"default:1" json:"trafficResetDay"`
 	NotifyPercent             int        `gorm:"default:80" json:"notifyPercent"`
 	ViewPosition              int        `gorm:"default:1" json:"viewPosition"`
-	ConsumptionMultiplier     float64    `gorm:"default:1.0" json:"consumptionMultiplier"`
-	NodeConsumptionMultiplier float64    `gorm:"default:1.0" json:"nodeConsumptionMultiplier"`
+	ConsumptionMultiplier     int64      `gorm:"default:1000000000" json:"consumptionMultiplier"`
+	NodeConsumptionMultiplier int64      `gorm:"default:1000000000" json:"nodeConsumptionMultiplier"`
 	Tags                      string     `gorm:"type:text;default:'[]'"`
 	IntegrationUUIDs          string     `gorm:"type:text;default:'[]'"`
 	IPs                       string     `gorm:"type:text;default:'[]'"`

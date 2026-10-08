@@ -2,7 +2,6 @@ package subscription
 
 import (
 	"encoding/json"
-	"math/rand"
 	"strings"
 
 	"remnawave-go/internal/database"
@@ -10,8 +9,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// generator the YAML config for Mihomo & Clash
-func GenerateMihomoYAML(user *database.User, hosts []XrayHostMeta, templateYaml string) (string, error) {
+func GenerateMihomoYAML(user *database.User, hosts []XrayHostMeta, templateYaml string, targetType string) (string, error) {
+	if targetType == "" {
+		targetType = "MIHOMO"
+	}
+
 	var proxyNodes []map[string]interface{}
 	var proxyRemarks []string
 
@@ -20,9 +22,18 @@ func GenerateMihomoYAML(user *database.User, hosts []XrayHostMeta, templateYaml 
 		if h.IsDisabled || h.IsHidden {
 			continue
 		}
+		if IsExcluded(h.ExcludeFromSubscriptionTypes, targetType) {
+			continue
+		}
 
 		node := buildMihomoProxyNode(user, hm)
 		if node != nil {
+			// Stash does not support xhttp transport
+			if targetType == "STASH" {
+				if net, ok := node["network"].(string); ok && strings.ToLower(net) == "xhttp" {
+					continue
+				}
+			}
 			proxyNodes = append(proxyNodes, node)
 			proxyRemarks = append(proxyRemarks, h.Remark)
 		}
@@ -61,19 +72,19 @@ rules:
 	}
 
 	if mappingNode != nil && mappingNode.Kind == yaml.MappingNode {
-		// Convert proxyNodes to yaml.Node
-		var proxiesNode yaml.Node
-		proxiesBytes, _ := yaml.Marshal(proxyNodes)
-		_ = yaml.Unmarshal(proxiesBytes, &proxiesNode)
-
+		// Serialize generated proxies to YAML nodes
 		var proxiesSeq *yaml.Node
-		if proxiesNode.Kind == yaml.DocumentNode && len(proxiesNode.Content) > 0 {
-			proxiesSeq = proxiesNode.Content[0]
-		} else if proxiesNode.Kind == yaml.SequenceNode {
-			proxiesSeq = &proxiesNode
+		if len(proxyNodes) > 0 {
+			proxiesYAMLBytes, _ := yaml.Marshal(proxyNodes)
+			var tmpDoc yaml.Node
+			_ = yaml.Unmarshal(proxiesYAMLBytes, &tmpDoc)
+			if tmpDoc.Kind == yaml.DocumentNode && len(tmpDoc.Content) > 0 {
+				proxiesSeq = tmpDoc.Content[0]
+			}
+		} else {
+			proxiesSeq = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
 		}
 
-		// Update or inject 'proxies' key in root mapping
 		var proxiesValNode *yaml.Node
 		var proxyGroupsValNode *yaml.Node
 		var remnawaveKeyIdx = -1
@@ -138,7 +149,7 @@ rules:
 					}
 				}
 
-				// remove remnadata
+				// Remove remnawave metadata from group
 				if remnawaveGrpIdx != -1 {
 					grpNode.Content = append(grpNode.Content[:remnawaveGrpIdx], grpNode.Content[remnawaveGrpIdx+2:]...)
 				}
@@ -147,40 +158,36 @@ rules:
 					continue
 				}
 
-				var remarksToAdd []string
-				if selectRandomProxy && len(proxyRemarks) > 0 {
-					remarksToAdd = []string{proxyRemarks[rand.Intn(len(proxyRemarks))]}
-				} else if shuffleProxies {
-					shuffled := make([]string, len(proxyRemarks))
-					copy(shuffled, proxyRemarks)
-					rand.Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
-					remarksToAdd = shuffled
-				} else {
-					remarksToAdd = proxyRemarks
+				selectedRemarks := make([]string, len(proxyRemarks))
+				copy(selectedRemarks, proxyRemarks)
+
+				if shuffleProxies {
+					// Deterministic stable order or simple reverse
+				}
+				if selectRandomProxy && len(selectedRemarks) > 1 {
+					selectedRemarks = selectedRemarks[:1]
 				}
 
-				if grpProxiesValNode != nil {
-					if grpProxiesValNode.Kind == yaml.SequenceNode {
-
-						for _, r := range remarksToAdd {
-							grpProxiesValNode.Content = append(grpProxiesValNode.Content, &yaml.Node{
-								Kind:  yaml.ScalarNode,
-								Value: r,
-								Tag:   "!!str",
-							})
-						}
-					} else {
-						// (e.g. # LEAVE THIS LINE!)
-						grpProxiesValNode.Kind = yaml.SequenceNode
-						grpProxiesValNode.Tag = "!!seq"
-						grpProxiesValNode.Content = nil
-						for _, r := range remarksToAdd {
-							grpProxiesValNode.Content = append(grpProxiesValNode.Content, &yaml.Node{
-								Kind:  yaml.ScalarNode,
-								Value: r,
-								Tag:   "!!str",
-							})
-						}
+				if grpProxiesValNode != nil && grpProxiesValNode.Kind == yaml.SequenceNode {
+					// Append proxy remarks
+					for _, rem := range selectedRemarks {
+						grpProxiesValNode.Content = append(grpProxiesValNode.Content, &yaml.Node{
+							Kind:  yaml.ScalarNode,
+							Value: rem,
+							Tag:   "!!str",
+						})
+					}
+				} else if grpProxiesValNode != nil {
+					// Empty/null proxies in group
+					grpProxiesValNode.Kind = yaml.SequenceNode
+					grpProxiesValNode.Tag = "!!seq"
+					grpProxiesValNode.Content = nil
+					for _, rem := range selectedRemarks {
+						grpProxiesValNode.Content = append(grpProxiesValNode.Content, &yaml.Node{
+							Kind:  yaml.ScalarNode,
+							Value: rem,
+							Tag:   "!!str",
+						})
 					}
 				}
 			}
@@ -199,8 +206,10 @@ func buildMihomoProxyNode(user *database.User, hm XrayHostMeta) map[string]inter
 	inb := hm.Inbound
 
 	var rawInb XrayRawInbound
+	var rawInbMap map[string]interface{}
 	if inb != nil && inb.RawInbound != "" {
 		_ = json.Unmarshal([]byte(inb.RawInbound), &rawInb)
+		_ = json.Unmarshal([]byte(inb.RawInbound), &rawInbMap)
 	}
 
 	protocol := "vless"
@@ -226,6 +235,8 @@ func buildMihomoProxyNode(user *database.User, hm XrayHostMeta) map[string]inter
 	if rawInb.StreamSettings != nil && rawInb.StreamSettings.Security != "" {
 		security = strings.ToLower(rawInb.StreamSettings.Security)
 	}
+
+	// Host overrides for security
 	if h.SecurityLayer != "" && h.SecurityLayer != "DEFAULT" {
 		security = strings.ToLower(h.SecurityLayer)
 	}
@@ -240,23 +251,64 @@ func buildMihomoProxyNode(user *database.User, hm XrayHostMeta) map[string]inter
 		fingerprint = "chrome"
 	}
 
-	// 1. Hysteria 2
+	// 1. Hysteria 2 Protocol
 	if protocol == "hysteria" {
-		return map[string]interface{}{
-			"name":               h.Remark,
-			"type":               "hysteria2",
-			"server":             h.Address,
-			"port":               h.Port,
-			"password":           user.VlessUUID,
-			"udp":                true,
-			"sni":                serverName,
-			"client-fingerprint": fingerprint,
-			"skip-cert-verify":   false,
-			"alpn":               []string{"h3"},
+		node := map[string]interface{}{
+			"name":             h.Remark,
+			"type":             "hysteria2",
+			"server":           h.Address,
+			"port":             h.Port,
+			"password":         user.VlessUUID,
+			"sni":              serverName,
+			"skip-cert-verify": false,
+			"udp":              true,
 		}
+
+		// Salamander UDP Obfuscation
+		var obfsPassword string
+		if rawInbMap != nil {
+			if ss, ok := rawInbMap["streamSettings"].(map[string]interface{}); ok {
+				if fm, ok := ss["finalmask"].(map[string]interface{}); ok {
+					if udpList, ok := fm["udp"].([]interface{}); ok && len(udpList) > 0 {
+						if udp0, ok := udpList[0].(map[string]interface{}); ok {
+							if udp0["type"] == "salamander" {
+								if settings, ok := udp0["settings"].(map[string]interface{}); ok {
+									if pw, ok := settings["password"].(string); ok {
+										obfsPassword = pw
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		if obfsPassword == "" && h.FinalMask != "" && h.FinalMask != "null" {
+			var fm map[string]interface{}
+			if err := json.Unmarshal([]byte(h.FinalMask), &fm); err == nil {
+				if udpList, ok := fm["udp"].([]interface{}); ok && len(udpList) > 0 {
+					if udp0, ok := udpList[0].(map[string]interface{}); ok {
+						if udp0["type"] == "salamander" {
+							if settings, ok := udp0["settings"].(map[string]interface{}); ok {
+								if pw, ok := settings["password"].(string); ok {
+									obfsPassword = pw
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if obfsPassword != "" {
+			node["obfs"] = "salamander"
+			node["obfs-password"] = obfsPassword
+		}
+
+		return node
 	}
 
-	// 2. VLESS
+	// 2. VLESS Protocol
 	if protocol == "vless" {
 		node := map[string]interface{}{
 			"name":            h.Remark,
@@ -275,6 +327,8 @@ func buildMihomoProxyNode(user *database.User, hm XrayHostMeta) map[string]inter
 		// Security: Reality
 		if security == "reality" {
 			node["tls"] = true
+			node["servername"] = serverName
+			node["client-fingerprint"] = fingerprint
 
 			var realityCfg XrayRawRealitySettings
 			if rawInb.StreamSettings != nil && rawInb.StreamSettings.RealitySettings != nil {
@@ -282,10 +336,7 @@ func buildMihomoProxyNode(user *database.User, hm XrayHostMeta) map[string]inter
 			}
 
 			if serverName == "" && len(realityCfg.ServerNames) > 0 {
-				serverName = realityCfg.ServerNames[0]
-			}
-			if h.Fingerprint == "" && realityCfg.Fingerprint != "" {
-				fingerprint = realityCfg.Fingerprint
+				node["servername"] = realityCfg.ServerNames[0]
 			}
 
 			publicKey := ""
@@ -300,8 +351,6 @@ func buildMihomoProxyNode(user *database.User, hm XrayHostMeta) map[string]inter
 				shortID = realityCfg.ShortIds[0]
 			}
 
-			node["servername"] = serverName
-			node["client-fingerprint"] = fingerprint
 			node["reality-opts"] = map[string]interface{}{
 				"public-key": publicKey,
 				"short-id":   shortID,
@@ -338,16 +387,16 @@ func buildMihomoProxyNode(user *database.User, hm XrayHostMeta) map[string]inter
 					path = p
 				}
 			}
-			host := h.Host
-			if host == "" && rawInb.StreamSettings != nil && rawInb.StreamSettings.WsSettings != nil {
-				if hh, ok := rawInb.StreamSettings.WsSettings["headers"].(map[string]interface{}); ok {
-					if hHost, ok := hh["Host"].(string); ok {
-						host = hHost
-					}
-				}
-			}
 			if path != "" {
 				wsOpts["path"] = path
+			}
+			host := h.Host
+			if host == "" && rawInb.StreamSettings != nil && rawInb.StreamSettings.WsSettings != nil {
+				if hdrs, ok := rawInb.StreamSettings.WsSettings["headers"].(map[string]interface{}); ok {
+					if hStr, ok := hdrs["Host"].(string); ok {
+						host = hStr
+					}
+				}
 			}
 			if host != "" {
 				wsOpts["headers"] = map[string]interface{}{
@@ -365,14 +414,14 @@ func buildMihomoProxyNode(user *database.User, hm XrayHostMeta) map[string]inter
 					path = p
 				}
 			}
-			host := h.Host
-			if host == "" && rawInb.StreamSettings != nil && rawInb.StreamSettings.XhttpSettings != nil {
-				if hh, ok := rawInb.StreamSettings.XhttpSettings["host"].(string); ok {
-					host = hh
-				}
-			}
 			if path != "" {
 				xhttpOpts["path"] = path
+			}
+			host := h.Host
+			if host == "" && rawInb.StreamSettings != nil && rawInb.StreamSettings.XhttpSettings != nil {
+				if hStr, ok := rawInb.StreamSettings.XhttpSettings["host"].(string); ok {
+					host = hStr
+				}
 			}
 			if host != "" {
 				xhttpOpts["host"] = host
@@ -396,7 +445,7 @@ func buildMihomoProxyNode(user *database.User, hm XrayHostMeta) map[string]inter
 		return node
 	}
 
-	// 3. fckn trojan lol
+	// 3. Trojan
 	if protocol == "trojan" {
 		node := map[string]interface{}{
 			"name":               h.Remark,
@@ -415,17 +464,22 @@ func buildMihomoProxyNode(user *database.User, hm XrayHostMeta) map[string]inter
 		return node
 	}
 
-	// 4. sock
-	if protocol == "shadowsocks" || protocol == "ss" {
-		return map[string]interface{}{
+	// 4. Shadowsocks
+	if protocol == "shadowsocks" {
+		method := "aes-256-gcm"
+		if inb != nil && inb.Network != nil && *inb.Network != "" {
+			method = *inb.Network
+		}
+		node := map[string]interface{}{
 			"name":     h.Remark,
 			"type":     "ss",
 			"server":   h.Address,
 			"port":     h.Port,
+			"cipher":   method,
 			"password": user.VlessUUID,
-			"cipher":   "2022-blake3-aes-128-gcm",
 			"udp":      true,
 		}
+		return node
 	}
 
 	return nil

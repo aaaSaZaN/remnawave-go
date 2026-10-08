@@ -3,7 +3,9 @@ package nodes
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +14,23 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
+
+func NanoToMultiplier(v int64) float64 {
+	if v == 0 {
+		return 1.0
+	}
+	if v < 1000000 {
+		return float64(v)
+	}
+	return float64(v) / 1e9
+}
+
+func MultiplierToNano(v float64) int64 {
+	if v <= 0 {
+		return 1000000000
+	}
+	return int64(math.Round(v * 1e9))
+}
 
 type NodeHotMetrics struct {
 	System      *NodeSystemStatsResponse `json:"system"`
@@ -58,11 +77,13 @@ func (s *Service) DB() *gorm.DB {
 }
 
 type CreateNodeDTO struct {
-	Name                    string  `json:"name"`
-	Address                 string  `json:"address"`
-	Port                    *int    `json:"port"`
-	CountryCode             string  `json:"countryCode"`
-	TrafficLimitBytes       uint64  `json:"trafficLimitBytes"`
+	Name                      string   `json:"name"`
+	Address                   string   `json:"address"`
+	Port                      *int     `json:"port"`
+	CountryCode               string   `json:"countryCode"`
+	TrafficLimitBytes         uint64   `json:"trafficLimitBytes"`
+	ConsumptionMultiplier     *float64 `json:"consumptionMultiplier"`
+	NodeConsumptionMultiplier *float64 `json:"nodeConsumptionMultiplier"`
 	ActiveConfigProfileUUID *string `json:"activeConfigProfileUuid"`
 	ActivePluginUUID        *string `json:"activePluginUuid"`
 	ProviderUUID            *string `json:"providerUuid"`
@@ -173,10 +194,7 @@ func (s *Service) PollNodeStats(node *database.Node) {
 			activeCount++
 
 			// Apply node consumption multiplier (stored as nano: 1.0 = 1,000,000,000)
-			mult := node.ConsumptionMultiplier
-			if mult >= 1000000 {
-				mult = mult / 1000000000.0
-			}
+			mult := NanoToMultiplier(node.ConsumptionMultiplier)
 			if mult <= 0 {
 				mult = 1.0
 			}
@@ -282,6 +300,15 @@ func (s *Service) Create(dto CreateNodeDTO) (*database.Node, error) {
 		profileUuid = &dto.ConfigProfile.ActiveConfigProfileUUID
 	}
 
+	cm := 1.0
+	if dto.ConsumptionMultiplier != nil {
+		cm = *dto.ConsumptionMultiplier
+	}
+	ncm := 1.0
+	if dto.NodeConsumptionMultiplier != nil {
+		ncm = *dto.NodeConsumptionMultiplier
+	}
+
 	node := &database.Node{
 		UUID:                      uuid.NewString(),
 		Name:                      dto.Name,
@@ -296,8 +323,8 @@ func (s *Service) Create(dto CreateNodeDTO) (*database.Node, error) {
 		IsConnected:               false,
 		IsDisabled:                false,
 		ViewPosition:              maxPos + 1,
-		ConsumptionMultiplier:     1.0,
-		NodeConsumptionMultiplier: 1.0,
+		ConsumptionMultiplier:     MultiplierToNano(cm),
+		NodeConsumptionMultiplier: MultiplierToNano(ncm),
 		TrafficResetDay:           1,
 		NotifyPercent:             80,
 		Tags:                      "[]",
@@ -355,3 +382,179 @@ func (s *Service) Update(uuid string, updates map[string]interface{}) (*database
 func (s *Service) Delete(uuid string) error {
 	return s.db.Where("uuid = ?", uuid).Delete(&database.Node{}).Error
 }
+
+type InboundInfo struct {
+	Tag        string `gorm:"column:tag"`
+	Type       string `gorm:"column:type"`
+	Network    string `gorm:"column:network"`
+	Security   string `gorm:"column:security"`
+	RawInbound string `gorm:"column:raw_inbound"`
+}
+
+func getVlessFlow(network, security, rawInbound string) string {
+	if rawInbound != "" {
+		var raw map[string]interface{}
+		if err := json.Unmarshal([]byte(rawInbound), &raw); err == nil {
+			if settings, ok := raw["settings"].(map[string]interface{}); ok {
+				if f, ok := settings["flow"].(string); ok && f == "xtls-rprx-vision" {
+					return "xtls-rprx-vision"
+				}
+			}
+		}
+	}
+	if (network == "tcp" || network == "raw") && (security == "reality" || security == "tls") {
+		return "xtls-rprx-vision"
+	}
+	return ""
+}
+
+func isSS2022(rawInbound string) bool {
+	if rawInbound == "" {
+		return false
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(rawInbound), &raw); err == nil {
+		if settings, ok := raw["settings"].(map[string]interface{}); ok {
+			if method, ok := settings["method"].(string); ok {
+				return strings.HasPrefix(method, "2022-")
+			}
+		}
+	}
+	return false
+}
+
+func (s *Service) GetUserResolvedInbounds(userID uint64) ([]InboundInfo, error) {
+	var inbounds []InboundInfo
+	err := s.db.Table("internal_squad_members").
+		Select("config_profile_inbounds.tag, config_profile_inbounds.type, config_profile_inbounds.network, config_profile_inbounds.security, config_profile_inbounds.raw_inbound").
+		Joins("JOIN internal_squads ON internal_squad_members.internal_squad_uuid = internal_squads.uuid").
+		Joins("JOIN internal_squad_inbounds ON internal_squads.uuid = internal_squad_inbounds.internal_squad_uuid").
+		Joins("JOIN config_profile_inbounds ON internal_squad_inbounds.inbound_uuid = config_profile_inbounds.uuid").
+		Where("internal_squad_members.user_id = ?", userID).
+		Scan(&inbounds).Error
+	return inbounds, err
+}
+
+func (s *Service) SyncUserToNodes(user *database.User, prevVlessUUID *string) {
+	if s.client == nil || user == nil {
+		return
+	}
+
+	var connectedNodes []database.Node
+	if err := s.db.Where("is_connected = ? AND is_disabled = ?", true, false).Find(&connectedNodes).Error; err != nil || len(connectedNodes) == 0 {
+		return
+	}
+
+	inbounds, err := s.GetUserResolvedInbounds(user.ID)
+	if err != nil {
+		return
+	}
+
+	isActive := strings.ToUpper(user.Status) == "ACTIVE"
+
+	for _, node := range connectedNodes {
+		var activeTags []string
+		s.db.Table("config_profile_inbounds_to_nodes").
+			Select("config_profile_inbounds.tag").
+			Joins("JOIN config_profile_inbounds ON config_profile_inbounds_to_nodes.config_profile_inbound_uuid = config_profile_inbounds.uuid").
+			Where("config_profile_inbounds_to_nodes.node_uuid = ?", node.UUID).
+			Pluck("tag", &activeTags)
+
+		tagSet := make(map[string]bool)
+		for _, t := range activeTags {
+			tagSet[t] = true
+		}
+
+		var matchedData []NodeUserInboundData
+		if isActive {
+			for _, inb := range inbounds {
+				if !tagSet[inb.Tag] {
+					continue
+				}
+				inbType := inb.Type
+				if inbType == "shadowsocks" && isSS2022(inb.RawInbound) {
+					inbType = "shadowsocks22"
+				}
+				flow := ""
+				uuidVal := ""
+				pwdVal := ""
+				switch inbType {
+				case "vless":
+					uuidVal = user.VlessUUID
+					flow = getVlessFlow(inb.Network, inb.Security, inb.RawInbound)
+				case "hysteria":
+					pwdVal = user.VlessUUID
+				case "trojan":
+					pwdVal = user.TrojanPassword
+				case "shadowsocks", "shadowsocks22":
+					pwdVal = user.SsPassword
+				}
+				matchedData = append(matchedData, NodeUserInboundData{
+					Type:     inbType,
+					Tag:      inb.Tag,
+					Username: strconv.FormatUint(user.ID, 10),
+					UUID:     uuidVal,
+					Password: pwdVal,
+					Flow:     flow,
+				})
+			}
+		}
+
+		if len(matchedData) > 0 {
+			req := AddUserRequestPayload{
+				HashData: NodeUserHashData{
+					VlessUUID:     user.VlessUUID,
+					PrevVlessUUID: prevVlessUUID,
+				},
+				Data: matchedData,
+			}
+			go func(n database.Node, r AddUserRequestPayload) {
+				_ = s.client.AddUser(&n, r)
+			}(node, req)
+		} else {
+			req := RemoveUserRequestPayload{
+				Username: strconv.FormatUint(user.ID, 10),
+				HashData: NodeUserHashData{
+					VlessUUID: user.VlessUUID,
+				},
+			}
+			go func(n database.Node, r RemoveUserRequestPayload) {
+				_ = s.client.RemoveUser(&n, r)
+			}(node, req)
+		}
+	}
+}
+
+func (s *Service) RemoveUserFromNodes(user *database.User) {
+	if s.client == nil || user == nil {
+		return
+	}
+
+	var connectedNodes []database.Node
+	if err := s.db.Where("is_connected = ? AND is_disabled = ?", true, false).Find(&connectedNodes).Error; err != nil || len(connectedNodes) == 0 {
+		return
+	}
+
+	req := RemoveUserRequestPayload{
+		Username: strconv.FormatUint(user.ID, 10),
+		HashData: NodeUserHashData{
+			VlessUUID: user.VlessUUID,
+		},
+	}
+	for _, node := range connectedNodes {
+		go func(n database.Node, r RemoveUserRequestPayload) {
+			_ = s.client.RemoveUser(&n, r)
+		}(node, req)
+	}
+}
+
+func (s *Service) SyncAllUsersToConnectedNodes() {
+	var users []database.User
+	if err := s.db.Where("status = ?", "ACTIVE").Find(&users).Error; err != nil {
+		return
+	}
+	for i := range users {
+		s.SyncUserToNodes(&users[i], nil)
+	}
+}
+

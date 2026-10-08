@@ -966,13 +966,66 @@ func (s *StubHandler) OAuth2Callback(w http.ResponseWriter, r *http.Request) {
 
 func (s *StubHandler) GetHwidStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	var totalHwidDevices int64
+	var totalUniqueDevices int64
+	var totalUsers int64
+	s.db.Model(&database.HwidDevice{}).Count(&totalHwidDevices)
+	s.db.Model(&database.HwidDevice{}).Distinct("hwid").Count(&totalUniqueDevices)
+	s.db.Model(&database.HwidDevice{}).Distinct("user_id").Count(&totalUsers)
+
+	avg := 0.0
+	if totalUsers > 0 {
+		avg = float64(totalHwidDevices) / float64(totalUsers)
+	}
+
+	type AppCount struct {
+		App   string `json:"app"`
+		Count int    `json:"count"`
+	}
+	type PlatformGroup struct {
+		Platform string     `json:"platform"`
+		Count    int        `json:"count"`
+		ByApp    []AppCount `json:"byApp"`
+	}
+
+	type Row struct {
+		Platform string
+		App      string
+		Count    int
+	}
+	var rows []Row
+	s.db.Raw(`
+SELECT
+    COALESCE(platform, 'Unknown') as platform,
+    COALESCE(SPLIT_PART(user_agent, '/', 1), 'Unknown') as app,
+    COUNT(hwid) as count
+FROM hwid_user_devices
+WHERE platform IS NOT NULL
+GROUP BY platform, SPLIT_PART(user_agent, '/', 1)
+`).Scan(&rows)
+
+	platMap := make(map[string]*PlatformGroup)
+	for _, r := range rows {
+		pg, ok := platMap[r.Platform]
+		if !ok {
+			pg = &PlatformGroup{Platform: r.Platform, ByApp: []AppCount{}}
+			platMap[r.Platform] = pg
+		}
+		pg.Count += r.Count
+		pg.ByApp = append(pg.ByApp, AppCount{App: r.App, Count: r.Count})
+	}
+	byPlat := make([]PlatformGroup, 0, len(platMap))
+	for _, pg := range platMap {
+		byPlat = append(byPlat, *pg)
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"byPlatform": []interface{}{},
+			"byPlatform": byPlat,
 			"stats": map[string]interface{}{
-				"totalUniqueDevices":        0,
-				"totalHwidDevices":          0,
-				"averageHwidDevicesPerUser": 0,
+				"totalUniqueDevices":        totalUniqueDevices,
+				"totalHwidDevices":          totalHwidDevices,
+				"averageHwidDevicesPerUser": avg,
 			},
 		},
 	})
@@ -980,20 +1033,56 @@ func (s *StubHandler) GetHwidStats(w http.ResponseWriter, r *http.Request) {
 
 func (s *StubHandler) GetHwidTopUsers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 10
+	}
+	type TopUserRow struct {
+		UserID   uint64 `json:"userId"`
+		Username string `json:"username"`
+		Count    int    `json:"count"`
+	}
+	var topUsers []TopUserRow
+	s.db.Raw(`
+SELECT
+    users.id as user_id,
+    users.username as username,
+    COUNT(hwid_user_devices.hwid) as count
+FROM hwid_user_devices
+JOIN users ON users.id = hwid_user_devices.user_id
+GROUP BY users.id, users.username
+ORDER BY count DESC
+LIMIT ?;
+`, limit).Scan(&topUsers)
+	if topUsers == nil {
+		topUsers = []TopUserRow{}
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"total": 0,
-			"users": []interface{}{},
+			"total": len(topUsers),
+			"users": topUsers,
 		},
 	})
 }
 
 func (s *StubHandler) GetHwidDevices(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	start, _ := strconv.Atoi(r.URL.Query().Get("start"))
+	size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+	if size <= 0 {
+		size = 50
+	}
+	var total int64
+	s.db.Model(&database.HwidDevice{}).Count(&total)
+	var devices []database.HwidDevice
+	s.db.Order("created_at desc").Offset(start).Limit(size).Find(&devices)
+	if devices == nil {
+		devices = []database.HwidDevice{}
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"devices": []interface{}{},
-			"total":   0,
+			"total":   total,
+			"devices": devices,
 		},
 	})
 }
@@ -1001,17 +1090,22 @@ func (s *StubHandler) GetHwidDevices(w http.ResponseWriter, r *http.Request) {
 func (s *StubHandler) GetUserHwidDevices(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	userIdStr := chi.URLParam(r, "userId")
-	userId, _ := strconv.ParseUint(userIdStr, 10, 64)
-	var user database.User
-	s.db.Where("id = ?", userId).First(&user)
+	userId, err := strconv.ParseUint(userIdStr, 10, 64)
+	if err != nil {
+		var user database.User
+		if err2 := s.db.Where("short_uuid = ? OR username = ?", userIdStr, userIdStr).First(&user).Error; err2 == nil {
+			userId = user.ID
+		}
+	}
+	var devices []database.HwidDevice
+	s.db.Where("user_id = ?", userId).Order("created_at desc").Find(&devices)
+	if devices == nil {
+		devices = []database.HwidDevice{}
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"devices": []interface{}{},
-			"user": map[string]interface{}{
-				"id":              user.ID,
-				"username":        user.Username,
-				"hwidDeviceLimit": user.HWIDDeviceLimit,
-			},
+			"total":   len(devices),
+			"devices": devices,
 		},
 	})
 }
@@ -1036,12 +1130,44 @@ func (s *StubHandler) CreateHwidDevice(w http.ResponseWriter, r *http.Request) {
 
 func (s *StubHandler) DeleteHwidDevice(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"response": map[string]interface{}{"success": true}})
+	var req struct {
+		HWID   string `json:"hwid"`
+		UserID uint64 `json:"userId"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.HWID != "" {
+		s.db.Where("hwid = ?", req.HWID).Delete(&database.HwidDevice{})
+	}
+	var remaining []database.HwidDevice
+	if req.UserID > 0 {
+		s.db.Where("user_id = ?", req.UserID).Find(&remaining)
+	}
+	if remaining == nil {
+		remaining = []database.HwidDevice{}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"response": map[string]interface{}{
+			"total":   len(remaining),
+			"devices": remaining,
+		},
+	})
 }
 
 func (s *StubHandler) DeleteAllHwidDevices(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{"response": map[string]interface{}{"success": true}})
+	var req struct {
+		UserID uint64 `json:"userId"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	if req.UserID > 0 {
+		s.db.Where("user_id = ?", req.UserID).Delete(&database.HwidDevice{})
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"response": map[string]interface{}{
+			"total":   0,
+			"devices": []interface{}{},
+		},
+	})
 }
 
 func (s *StubHandler) ConnectionsByUser(w http.ResponseWriter, r *http.Request) {
@@ -1526,64 +1652,610 @@ func (s *StubHandler) GenerateX25519(w http.ResponseWriter, r *http.Request) {
 
 func (s *StubHandler) GetSubHistory(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	start, _ := strconv.Atoi(r.URL.Query().Get("start"))
+	size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+	if size <= 0 {
+		size = 50
+	}
+	var total int64
+	s.db.Model(&database.UserSubscriptionRequestHistory{}).Count(&total)
+
+	var records []database.UserSubscriptionRequestHistory
+	s.db.Order("request_at desc").Offset(start).Limit(size).Find(&records)
+	if records == nil {
+		records = []database.UserSubscriptionRequestHistory{}
+	}
+
+	type RecordJSON struct {
+		ID              uint64    `json:"id"`
+		UserID          uint64    `json:"userId"`
+		RequestAt       time.Time `json:"requestAt"`
+		RequestIP       *string   `json:"requestIp"`
+		UserAgent       *string   `json:"userAgent"`
+		SrrRuleName     *string   `json:"srrRuleName"`
+		SrrResponseType string    `json:"srrResponseType"`
+	}
+
+	result := make([]RecordJSON, len(records))
+	for i, rec := range records {
+		result[i] = RecordJSON{
+			ID:              rec.ID,
+			UserID:          rec.UserID,
+			RequestAt:       rec.RequestAt,
+			RequestIP:       rec.RequestIP,
+			UserAgent:       rec.UserAgent,
+			SrrRuleName:     rec.SrrRuleName,
+			SrrResponseType: rec.SrrResponseType,
+		}
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"total":   0,
-			"records": []interface{}{},
+			"total":   total,
+			"records": result,
 		},
 	})
 }
 
 func (s *StubHandler) GetSubHistoryStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	type AppStat struct {
+		App   string `json:"app"`
+		Count int    `json:"count"`
+	}
+	var byParsedApp []AppStat
+	s.db.Raw(`
+SELECT 
+    CASE 
+        WHEN POSITION('/' IN user_agent) > 0 THEN SPLIT_PART(user_agent, '/', 1)
+        ELSE SPLIT_PART(user_agent, ' ', 1)
+    END AS app,
+    COUNT(id) AS count
+FROM user_subscription_request_history
+WHERE user_agent IS NOT NULL
+GROUP BY 1
+ORDER BY count DESC
+LIMIT 50;
+`).Scan(&byParsedApp)
+	if byParsedApp == nil {
+		byParsedApp = []AppStat{}
+	}
+
+	type HourlyStat struct {
+		DateTime     time.Time `json:"dateTime"`
+		RequestCount int       `json:"requestCount"`
+	}
+	var hourlyRequestStats []HourlyStat
+	s.db.Raw(`
+SELECT 
+    date_trunc('hour', request_at) AS date_time,
+    COUNT(id) AS request_count
+FROM user_subscription_request_history
+WHERE request_at >= NOW() - INTERVAL '48 hours'
+GROUP BY 1
+ORDER BY 1;
+`).Scan(&hourlyRequestStats)
+	if hourlyRequestStats == nil {
+		hourlyRequestStats = []HourlyStat{}
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"byParsedApp":        []interface{}{},
-			"hourlyRequestStats": []interface{}{},
+			"byParsedApp":        byParsedApp,
+			"hourlyRequestStats": hourlyRequestStats,
 		},
 	})
 }
 
+func colorFromUUID(id string) string {
+	var hash uint32
+	for i := 0; i < len(id); i++ {
+		hash = (hash << 5) - hash + uint32(id[i])
+	}
+	r := 64 + ((hash >> 16) & 0x7F)
+	g := 64 + ((hash >> 8) & 0x7F)
+	b := 64 + (hash & 0x7F)
+	return fmt.Sprintf("#%02x%02x%02x", r, g, b)
+}
+
+func colorFromID(id uint64) string {
+	return colorFromUUID(strconv.FormatUint(id, 10))
+}
+
+func parseDateRange(startStr, endStr string) (time.Time, time.Time, []string) {
+	now := time.Now().UTC()
+	defEnd := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	defStart := defEnd.AddDate(0, 0, -6)
+
+	startDate, err1 := time.Parse("2006-01-02", startStr)
+	endDate, err2 := time.Parse("2006-01-02", endStr)
+	if err1 != nil || err2 != nil || startDate.After(endDate) {
+		startDate = defStart
+		endDate = defEnd
+	}
+
+	var categories []string
+	for d := startDate; !d.After(endDate); d = d.AddDate(0, 0, 1) {
+		categories = append(categories, d.Format("2006-01-02"))
+	}
+	return startDate, endDate, categories
+}
+
 func (s *StubHandler) GetBandwidthStatsNodes(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
+	startStr := r.URL.Query().Get("start")
+	endStr := r.URL.Query().Get("end")
+	topNodesLimit, _ := strconv.Atoi(r.URL.Query().Get("topNodesLimit"))
+	if topNodesLimit <= 0 {
+		topNodesLimit = 10
+	}
+
+	startDate, endDate, categories := parseDateRange(startStr, endStr)
+
+	type DailyRow struct {
+		Date  string
+		Total int64
+	}
+	var dailyRows []DailyRow
+	s.db.Raw(`
+SELECT
+    DATE_TRUNC('day', created_at)::date::text AS date,
+    COALESCE(SUM(total_bytes), 0) AS total
+FROM nodes_usage_history
+WHERE created_at >= ?::date AND created_at <= (?::date + INTERVAL '1 day' - INTERVAL '1 millisecond')
+GROUP BY DATE_TRUNC('day', created_at)::date
+`, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&dailyRows)
+
+	dateMap := make(map[string]int64)
+	for _, dr := range dailyRows {
+		dateMap[dr.Date] = dr.Total
+	}
+	sparklineData := make([]int64, len(categories))
+	for i, cat := range categories {
+		sparklineData[i] = dateMap[cat]
+	}
+
+	type TopNodeDBRow struct {
+		UUID        string
+		Name        string
+		CountryCode string
+		Total       int64
+	}
+	var topNodeRows []TopNodeDBRow
+	s.db.Raw(`
+SELECT
+    n.uuid,
+    n.name,
+    n.country_code,
+    COALESCE(SUM(nuh.total_bytes), 0) AS total
+FROM nodes n
+JOIN nodes_usage_history nuh ON nuh.node_uuid = n.uuid
+WHERE nuh.created_at >= ?::date AND nuh.created_at <= (?::date + INTERVAL '1 day' - INTERVAL '1 millisecond')
+GROUP BY n.uuid, n.name, n.country_code
+ORDER BY total DESC
+LIMIT ?
+`, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), topNodesLimit).Scan(&topNodeRows)
+
+	type TopNodeItem struct {
+		UUID        string `json:"uuid"`
+		Name        string `json:"name"`
+		Color       string `json:"color"`
+		CountryCode string `json:"countryCode"`
+		Total       int64  `json:"total"`
+	}
+	type SeriesItem struct {
+		UUID        string  `json:"uuid"`
+		Name        string  `json:"name"`
+		Color       string  `json:"color"`
+		CountryCode string  `json:"countryCode"`
+		Total       int64   `json:"total"`
+		Data        []int64 `json:"data"`
+	}
+
+	topNodes := make([]TopNodeItem, 0, len(topNodeRows))
+	series := make([]SeriesItem, 0, len(topNodeRows))
+
+	if len(topNodeRows) > 0 {
+		var nodeUuids []string
+		for _, tn := range topNodeRows {
+			nodeUuids = append(nodeUuids, tn.UUID)
+		}
+
+		type NodeDailyRow struct {
+			NodeUUID string
+			Date     string
+			Total    int64
+		}
+		var nodeDailyRows []NodeDailyRow
+		s.db.Raw(`
+SELECT
+    nuh.node_uuid,
+    DATE_TRUNC('day', nuh.created_at)::date::text AS date,
+    COALESCE(SUM(nuh.total_bytes), 0) AS total
+FROM nodes_usage_history nuh
+WHERE nuh.node_uuid IN (?)
+  AND nuh.created_at >= ?::date
+  AND nuh.created_at <= (?::date + INTERVAL '1 day' - INTERVAL '1 millisecond')
+GROUP BY nuh.node_uuid, DATE_TRUNC('day', nuh.created_at)::date
+`, nodeUuids, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&nodeDailyRows)
+
+		nodeDateMap := make(map[string]map[string]int64)
+		for _, ndr := range nodeDailyRows {
+			if nodeDateMap[ndr.NodeUUID] == nil {
+				nodeDateMap[ndr.NodeUUID] = make(map[string]int64)
+			}
+			nodeDateMap[ndr.NodeUUID][ndr.Date] = ndr.Total
+		}
+
+		for _, tn := range topNodeRows {
+			color := colorFromUUID(tn.UUID)
+			topNodes = append(topNodes, TopNodeItem{
+				UUID:        tn.UUID,
+				Name:        tn.Name,
+				Color:       color,
+				CountryCode: tn.CountryCode,
+				Total:       tn.Total,
+			})
+
+			nodeData := make([]int64, len(categories))
+			for i, cat := range categories {
+				if nodeDateMap[tn.UUID] != nil {
+					nodeData[i] = nodeDateMap[tn.UUID][cat]
+				}
+			}
+
+			series = append(series, SeriesItem{
+				UUID:        tn.UUID,
+				Name:        tn.Name,
+				Color:       color,
+				CountryCode: tn.CountryCode,
+				Total:       tn.Total,
+				Data:        nodeData,
+			})
+		}
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"categories":    []string{},
-			"sparklineData": []float64{},
-			"topNodes":      []interface{}{},
-			"series":        []interface{}{},
+			"categories":    categories,
+			"sparklineData": sparklineData,
+			"topNodes":      topNodes,
+			"series":        series,
 		},
 	})
 }
 
 func (s *StubHandler) GetBandwidthStatsUsers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
+	userIdStr := chi.URLParam(r, "userId")
+	userId, err := strconv.ParseUint(userIdStr, 10, 64)
+	if err != nil {
+		var user database.User
+		if err2 := s.db.Where("short_uuid = ? OR username = ?", userIdStr, userIdStr).First(&user).Error; err2 == nil {
+			userId = user.ID
+		}
+	}
+
+	startStr := r.URL.Query().Get("start")
+	endStr := r.URL.Query().Get("end")
+	topNodesLimit, _ := strconv.Atoi(r.URL.Query().Get("topNodesLimit"))
+	if topNodesLimit <= 0 {
+		topNodesLimit = 10
+	}
+
+	startDate, endDate, categories := parseDateRange(startStr, endStr)
+
+	type DailyRow struct {
+		Date  string
+		Total int64
+	}
+	var dailyRows []DailyRow
+	s.db.Raw(`
+SELECT
+    created_at::text AS date,
+    COALESCE(SUM(total_bytes), 0) AS total
+FROM nodes_user_usage_history
+WHERE user_id = ?
+  AND created_at >= ?::date
+  AND created_at <= ?::date
+GROUP BY created_at
+`, userId, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&dailyRows)
+
+	dateMap := make(map[string]int64)
+	for _, dr := range dailyRows {
+		dateMap[dr.Date] = dr.Total
+	}
+	sparklineData := make([]int64, len(categories))
+	for i, cat := range categories {
+		sparklineData[i] = dateMap[cat]
+	}
+
+	type TopNodeDBRow struct {
+		NodeID      uint64
+		UUID        string
+		Name        string
+		CountryCode string
+		Total       int64
+	}
+	var topNodeRows []TopNodeDBRow
+	s.db.Raw(`
+SELECT
+    n.id AS node_id,
+    n.uuid,
+    n.name,
+    n.country_code,
+    COALESCE(SUM(nuh.total_bytes), 0) AS total
+FROM nodes n
+JOIN nodes_user_usage_history nuh ON nuh.node_id = n.id
+WHERE nuh.user_id = ?
+  AND nuh.created_at >= ?::date
+  AND nuh.created_at <= ?::date
+GROUP BY n.id, n.uuid, n.name, n.country_code
+ORDER BY total DESC
+LIMIT ?
+`, userId, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), topNodesLimit).Scan(&topNodeRows)
+
+	type TopNodeItem struct {
+		UUID        string `json:"uuid"`
+		Name        string `json:"name"`
+		Color       string `json:"color"`
+		CountryCode string `json:"countryCode"`
+		Total       int64  `json:"total"`
+	}
+	type SeriesItem struct {
+		UUID        string  `json:"uuid"`
+		Name        string  `json:"name"`
+		Color       string  `json:"color"`
+		CountryCode string  `json:"countryCode"`
+		Total       int64   `json:"total"`
+		Data        []int64 `json:"data"`
+	}
+
+	topNodes := make([]TopNodeItem, 0, len(topNodeRows))
+	series := make([]SeriesItem, 0, len(topNodeRows))
+
+	if len(topNodeRows) > 0 {
+		var nodeIds []uint64
+		for _, tn := range topNodeRows {
+			nodeIds = append(nodeIds, tn.NodeID)
+		}
+
+		type NodeDailyRow struct {
+			NodeID uint64
+			Date   string
+			Total  int64
+		}
+		var nodeDailyRows []NodeDailyRow
+		s.db.Raw(`
+SELECT
+    node_id,
+    created_at::text AS date,
+    COALESCE(SUM(total_bytes), 0) AS total
+FROM nodes_user_usage_history
+WHERE user_id = ?
+  AND node_id IN (?)
+  AND created_at >= ?::date
+  AND created_at <= ?::date
+GROUP BY node_id, created_at
+`, userId, nodeIds, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&nodeDailyRows)
+
+		nodeDateMap := make(map[uint64]map[string]int64)
+		for _, ndr := range nodeDailyRows {
+			if nodeDateMap[ndr.NodeID] == nil {
+				nodeDateMap[ndr.NodeID] = make(map[string]int64)
+			}
+			nodeDateMap[ndr.NodeID][ndr.Date] = ndr.Total
+		}
+
+		for _, tn := range topNodeRows {
+			color := colorFromUUID(tn.UUID)
+			topNodes = append(topNodes, TopNodeItem{
+				UUID:        tn.UUID,
+				Name:        tn.Name,
+				Color:       color,
+				CountryCode: tn.CountryCode,
+				Total:       tn.Total,
+			})
+
+			nodeData := make([]int64, len(categories))
+			for i, cat := range categories {
+				if nodeDateMap[tn.NodeID] != nil {
+					nodeData[i] = nodeDateMap[tn.NodeID][cat]
+				}
+			}
+
+			series = append(series, SeriesItem{
+				UUID:        tn.UUID,
+				Name:        tn.Name,
+				Color:       color,
+				CountryCode: tn.CountryCode,
+				Total:       tn.Total,
+				Data:        nodeData,
+			})
+		}
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"categories":    []string{},
-			"sparklineData": []float64{},
-			"topNodes":      []interface{}{},
-			"series":        []interface{}{},
+			"categories":    categories,
+			"sparklineData": sparklineData,
+			"topNodes":      topNodes,
+			"series":        series,
 		},
 	})
 }
 
 func (s *StubHandler) GetBandwidthStatsNodeUsers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
+	startStr := r.URL.Query().Get("start")
+	endStr := r.URL.Query().Get("end")
+	topUsersLimit, _ := strconv.Atoi(r.URL.Query().Get("topUsersLimit"))
+	if topUsersLimit <= 0 {
+		topUsersLimit = 100
+	}
+
+	startDate, endDate, categories := parseDateRange(startStr, endStr)
+
+	var nodeUuids []string
+	if uuidParam := chi.URLParam(r, "uuid"); uuidParam != "" {
+		nodeUuids = append(nodeUuids, uuidParam)
+	}
+
+	if r.Method == http.MethodPost {
+		var body struct {
+			NodesUuids []string `json:"nodesUuids"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if len(body.NodesUuids) > 0 {
+			nodeUuids = append(nodeUuids, body.NodesUuids...)
+		}
+	}
+
+	var nodeIds []uint64
+	if len(nodeUuids) > 0 {
+		s.db.Model(&database.Node{}).Where("uuid IN (?)", nodeUuids).Pluck("id", &nodeIds)
+	} else {
+		s.db.Model(&database.Node{}).Pluck("id", &nodeIds)
+	}
+
+	sparklineData := make([]int64, len(categories))
+	type TopUserItem struct {
+		Color    string `json:"color"`
+		Username string `json:"username"`
+		Total    int64  `json:"total"`
+	}
+	topUsers := make([]TopUserItem, 0)
+
+	if len(nodeIds) > 0 {
+		type DailyRow struct {
+			Date  string
+			Total int64
+		}
+		var dailyRows []DailyRow
+		s.db.Raw(`
+SELECT
+    nuh.created_at::text AS date,
+    COALESCE(SUM(nuh.total_bytes), 0) AS total
+FROM nodes_user_usage_history nuh
+WHERE nuh.node_id IN (?)
+  AND nuh.created_at >= ?::date
+  AND nuh.created_at <= ?::date
+GROUP BY nuh.created_at
+`, nodeIds, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&dailyRows)
+
+		dateMap := make(map[string]int64)
+		for _, dr := range dailyRows {
+			dateMap[dr.Date] = dr.Total
+		}
+		for i, cat := range categories {
+			sparklineData[i] = dateMap[cat]
+		}
+
+		type TopUserDBRow struct {
+			UserID   uint64
+			Username string
+			Total    int64
+		}
+		var topUserRows []TopUserDBRow
+		s.db.Raw(`
+SELECT
+    u.id AS user_id,
+    u.username,
+    COALESCE(SUM(nuh.total_bytes), 0) AS total
+FROM users u
+JOIN nodes_user_usage_history nuh ON nuh.user_id = u.id
+WHERE nuh.node_id IN (?)
+  AND nuh.created_at >= ?::date
+  AND nuh.created_at <= ?::date
+GROUP BY u.id, u.username
+ORDER BY total DESC
+LIMIT ?
+`, nodeIds, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), topUsersLimit).Scan(&topUserRows)
+
+		for _, tu := range topUserRows {
+			topUsers = append(topUsers, TopUserItem{
+				Color:    colorFromID(tu.UserID),
+				Username: tu.Username,
+				Total:    tu.Total,
+			})
+		}
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"categories":    []string{},
-			"sparklineData": []float64{},
-			"topUsers":      []interface{}{},
+			"categories":    categories,
+			"sparklineData": sparklineData,
+			"topUsers":      topUsers,
 		},
 	})
 }
 
 func (s *StubHandler) GetBandwidthNodesUsage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
+	startStr := r.URL.Query().Get("start")
+	endStr := r.URL.Query().Get("end")
+	minBytes, _ := strconv.ParseInt(r.URL.Query().Get("minTotalBytes"), 10, 64)
+
+	startDate, endDate, _ := parseDateRange(startStr, endStr)
+
+	var body struct {
+		NodesUuids []string `json:"nodesUuids"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	type UsageRow struct {
+		NodeUUID   string
+		UserID     uint64
+		TotalBytes int64
+	}
+	var rows []UsageRow
+
+	query := s.db.Table("nodes_user_usage_history as nuh").
+		Select("n.uuid as node_uuid, nuh.user_id, COALESCE(SUM(nuh.total_bytes), 0) as total_bytes").
+		Joins("JOIN nodes n ON n.id = nuh.node_id").
+		Where("nuh.created_at >= ?::date AND nuh.created_at <= ?::date", startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).
+		Group("n.uuid, nuh.user_id")
+
+	if len(body.NodesUuids) > 0 {
+		query = query.Where("n.uuid IN (?)", body.NodesUuids)
+	}
+	if minBytes > 0 {
+		query = query.Having("SUM(nuh.total_bytes) >= ?", minBytes)
+	}
+
+	query.Scan(&rows)
+
+	type UserUsageItem struct {
+		ID         uint64 `json:"id"`
+		TotalBytes int64  `json:"totalBytes"`
+	}
+	type NodeUsageItem struct {
+		UUID  string          `json:"uuid"`
+		Users []UserUsageItem `json:"users"`
+	}
+
+	nodeMap := make(map[string]*NodeUsageItem)
+	for _, r := range rows {
+		item, ok := nodeMap[r.NodeUUID]
+		if !ok {
+			item = &NodeUsageItem{UUID: r.NodeUUID, Users: []UserUsageItem{}}
+		nodeMap[r.NodeUUID] = item
+		}
+		item.Users = append(item.Users, UserUsageItem{ID: r.UserID, TotalBytes: r.TotalBytes})
+	}
+
+	result := make([]NodeUsageItem, 0, len(nodeMap))
+	for _, item := range nodeMap {
+		result = append(result, *item)
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"nodes": []interface{}{},
+			"nodes": result,
 		},
 	})
 }

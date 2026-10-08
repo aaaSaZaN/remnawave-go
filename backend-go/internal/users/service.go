@@ -14,12 +14,26 @@ import (
 	"gorm.io/gorm"
 )
 
-type Service struct {
-	db *gorm.DB
+type NodeUserSyncer interface {
+	SyncUserToNodes(user *database.User, prevVlessUUID *string)
+	RemoveUserFromNodes(user *database.User)
 }
 
-func NewService(db *gorm.DB) *Service {
-	return &Service{db: db}
+type Service struct {
+	db     *gorm.DB
+	syncer NodeUserSyncer
+}
+
+func NewService(db *gorm.DB, syncer ...NodeUserSyncer) *Service {
+	var s NodeUserSyncer
+	if len(syncer) > 0 {
+		s = syncer[0]
+	}
+	return &Service{db: db, syncer: s}
+}
+
+func (s *Service) SetSyncer(syncer NodeUserSyncer) {
+	s.syncer = syncer
 }
 
 const alphabet = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ_abcdefghjkmnopqrstuvwxyz-"
@@ -191,6 +205,9 @@ func (s *Service) Create(dto CreateUserDTO) (*database.User, error) {
 	}
 
 	_ = s.loadSquadsForUsers([]*database.User{user})
+	if s.syncer != nil && strings.ToUpper(user.Status) == "ACTIVE" {
+		s.syncer.SyncUserToNodes(user, nil)
+	}
 	return user, nil
 }
 
@@ -540,6 +557,12 @@ func normalizeUserFields(raw map[string]interface{}) (map[string]interface{}, []
 }
 
 func (s *Service) Update(id uint64, updates map[string]interface{}) (*database.User, error) {
+	prevUser, _ := s.GetByID(id)
+	var prevVlessUUID *string
+	if prevUser != nil {
+		prevVlessUUID = &prevUser.VlessUUID
+	}
+
 	dbFields, activeSquads, hasSquads := normalizeUserFields(updates)
 	dbFields["updated_at"] = time.Now().UTC()
 
@@ -572,31 +595,60 @@ func (s *Service) Update(id uint64, updates map[string]interface{}) (*database.U
 	if err != nil {
 		return nil, err
 	}
-	return s.GetByID(id)
+	updatedUser, err := s.GetByID(id)
+	if err == nil && s.syncer != nil {
+		if strings.ToUpper(updatedUser.Status) == "ACTIVE" {
+		s.syncer.SyncUserToNodes(updatedUser, prevVlessUUID)
+		} else {
+			s.syncer.RemoveUserFromNodes(updatedUser)
+		}
+	}
+	return updatedUser, err
 }
 
 func (s *Service) Delete(id uint64) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	user, _ := s.GetByID(id)
+	err := s.db.Transaction(func(tx *gorm.DB) error {
 		_ = tx.Where("user_id = ?", id).Delete(&database.InternalSquadMember{}).Error
 		if err := tx.Where("id = ?", id).Delete(&database.UserTraffic{}).Error; err != nil {
 			return err
 		}
 		return tx.Where("id = ?", id).Delete(&database.User{}).Error
 	})
+	if err == nil && user != nil && s.syncer != nil {
+		s.syncer.RemoveUserFromNodes(user)
+	}
+	return err
 }
 
 func (s *Service) ResetTraffic(id uint64) error {
 	now := time.Now().UTC()
-	return s.db.Transaction(func(tx *gorm.DB) error {
+	err := s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&database.UserTraffic{}).Where("id = ?", id).Update("used_traffic_bytes", 0).Error; err != nil {
 			return err
 		}
 		return tx.Model(&database.User{}).Where("id = ?", id).Update("last_traffic_reset_at", &now).Error
 	})
+	if err == nil && s.syncer != nil {
+		if user, _ := s.GetByID(id); user != nil && strings.ToUpper(user.Status) == "ACTIVE" {
+			s.syncer.SyncUserToNodes(user, nil)
+		}
+	}
+	return err
 }
 
 func (s *Service) SetStatus(id uint64, status string) error {
-	return s.db.Model(&database.User{}).Where("id = ?", id).Update("status", status).Error
+	err := s.db.Model(&database.User{}).Where("id = ?", id).Update("status", status).Error
+	if err == nil && s.syncer != nil {
+		if user, _ := s.GetByID(id); user != nil {
+			if strings.ToUpper(status) == "ACTIVE" {
+				s.syncer.SyncUserToNodes(user, nil)
+			} else {
+				s.syncer.RemoveUserFromNodes(user)
+			}
+		}
+	}
+	return err
 }
 
 func (s *Service) BulkExtendExpirationDate(userIds []uint64, extendDays int) error {

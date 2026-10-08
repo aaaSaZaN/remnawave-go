@@ -462,3 +462,62 @@ func (c *Client) GetUsersStats(node *database.Node, reset bool) ([]NodeUserTraff
 	}
 	return res.Response.Users, nil
 }
+
+type NodeUserInboundData struct {
+	Type       string  `json:"type"`
+	Tag        string  `json:"tag"`
+	Username   string  `json:"username"`
+	UUID       string  `json:"uuid,omitempty"`
+	Password   string  `json:"password,omitempty"`
+	Flow       string  `json:"flow,omitempty"`
+	CipherType *string `json:"cipherType,omitempty"`
+	IVCheck    bool    `json:"ivCheck,omitempty"`
+}
+
+type NodeUserHashData struct {
+	VlessUUID     string  `json:"vlessUuid"`
+	PrevVlessUUID *string `json:"prevVlessUuid,omitempty"`
+}
+
+type AddUserRequestPayload struct {
+	HashData NodeUserHashData      `json:"hashData"`
+	Data     []NodeUserInboundData `json:"data"`
+}
+
+type RemoveUserRequestPayload struct {
+	Username string           `json:"username"`
+	HashData NodeUserHashData `json:"hashData"`
+}
+
+func (c *Client) AddUser(node *database.Node, payload AddUserRequestPayload) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("https://%s:%d/node/handler/add-user", node.Address, getNodePort(node))
+	resp, err := c.doRequest(ctx, "POST", url, payload)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("node returned status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+func (c *Client) RemoveUser(node *database.Node, payload RemoveUserRequestPayload) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("https://%s:%d/node/handler/remove-user", node.Address, getNodePort(node))
+	resp, err := c.doRequest(ctx, "POST", url, payload)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("node returned status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+

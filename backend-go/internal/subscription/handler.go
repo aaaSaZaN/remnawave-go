@@ -5,48 +5,55 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
-	"remnawave-go/internal/database"
-
 	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
+
+	"remnawave-go/internal/database"
 )
 
 type Handler struct {
-	db        *gorm.DB
-	generator *Generator
-	subDomain string
+	db              *gorm.DB
+	generator       *Generator
+	subPublicDomain string
 }
 
-func NewHandler(db *gorm.DB, subDomain string) *Handler {
+func NewHandler(db *gorm.DB, subPublicDomain string) *Handler {
 	return &Handler{
-		db:        db,
-		generator: NewGenerator(),
-		subDomain: subDomain,
+		db:              db,
+		generator:       NewGenerator(),
+		subPublicDomain: subPublicDomain,
 	}
 }
 
 func (h *Handler) getHostsForUser(userID uint64) []database.Host {
+	var user database.User
+	if err := h.db.First(&user, userID).Error; err != nil {
+		return nil
+	}
+
+	var count int64
+	h.db.Table("internal_squad_members").Where("user_id = ?", userID).Count(&count)
+
 	var hosts []database.Host
-
-	var squadCount int64
-	h.db.Table("internal_squad_members").Where("user_id = ?", userID).Count(&squadCount)
-
-	if squadCount > 0 {
+	if count > 0 {
 		query := `
 SELECT hosts.*
 FROM hosts
 WHERE EXISTS (
     SELECT 1
     FROM internal_squad_inbounds
-    INNER JOIN internal_squad_members ON internal_squad_members.internal_squad_uuid = internal_squad_inbounds.internal_squad_uuid
+    INNER JOIN internal_squad_members
+        ON internal_squad_members.internal_squad_uuid = internal_squad_inbounds.internal_squad_uuid
     WHERE internal_squad_inbounds.inbound_uuid = hosts.config_profile_inbound_uuid
       AND internal_squad_members.user_id = ?
       AND (
           EXISTS (
-              SELECT 1 FROM internal_squad_host_links
+              SELECT 1
+              FROM internal_squad_host_links
               WHERE internal_squad_host_links.host_uuid = hosts.uuid
                 AND internal_squad_host_links.squad_uuid = internal_squad_inbounds.internal_squad_uuid
           ) = (hosts.internal_squads_mode = 'ALLOW_ONLY')
@@ -56,7 +63,7 @@ AND hosts.is_disabled = false
 AND hosts.is_hidden = false
 ORDER BY hosts.view_position ASC;
 `
-		if err := h.db.Raw(query, userID).Scan(&hosts).Error; err == nil && len(hosts) > 0 {
+		if err := h.db.Raw(query, userID).Scan(&hosts).Error; err == nil {
 			return hosts
 		}
 	}
@@ -91,14 +98,12 @@ func (h *Handler) getHostsWithInboundsForUser(userID uint64) []XrayHostMeta {
 
 	result := make([]XrayHostMeta, 0, len(hosts))
 	for i := range hosts {
-		var inb *database.ConfigProfileInbound
 		if val, ok := inboundMap[hosts[i].ConfigProfileInboundUUID]; ok {
-			inb = &val
+			result = append(result, XrayHostMeta{
+				Host:    &hosts[i],
+				Inbound: &val,
+			})
 		}
-		result = append(result, XrayHostMeta{
-			Host:    &hosts[i],
-			Inbound: inb,
-		})
 	}
 	return result
 }
@@ -136,10 +141,42 @@ func (h *Handler) getTemplateForUser(user *database.User, templateType string, o
 	return ""
 }
 
-func formatHeaderValue(val string, user *database.User) string {
+func (h *Handler) getHostXrayTemplate(host *database.Host, defaultTmplJSON string) string {
+	if host.XrayJsonTemplateUUID != "" {
+		var tmpl database.SubscriptionTemplate
+		if err := h.db.Where("uuid = ?", host.XrayJsonTemplateUUID).First(&tmpl).Error; err == nil && tmpl.TemplateJson != "" && tmpl.TemplateJson != "{}" && tmpl.TemplateJson != "null" {
+			return tmpl.TemplateJson
+		}
+	}
+	return defaultTmplJSON
+}
+
+func formatHeaderValue(val string, user *database.User, subPublicDomain ...string) string {
+	domain := ""
+	if len(subPublicDomain) > 0 {
+		domain = subPublicDomain[0]
+	}
+	subURL := user.ShortUUID
+	if domain != "" {
+		trimmed := strings.TrimRight(domain, "/")
+		if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
+			subURL = fmt.Sprintf("%s/%s", trimmed, user.ShortUUID)
+		} else {
+			subURL = fmt.Sprintf("https://%s/%s", trimmed, user.ShortUUID)
+		}
+	}
+
+	val = strings.ReplaceAll(val, "{{USERNAME}}", user.Username)
+	val = strings.ReplaceAll(val, "{{username}}", user.Username)
 	val = strings.ReplaceAll(val, "{{user.username}}", user.Username)
+	val = strings.ReplaceAll(val, "{{SHORT_UUID}}", user.ShortUUID)
+	val = strings.ReplaceAll(val, "{{short_uuid}}", user.ShortUUID)
 	val = strings.ReplaceAll(val, "{{user.shortUuid}}", user.ShortUUID)
+	val = strings.ReplaceAll(val, "{{SUBSCRIPTION_URL}}", subURL)
+	val = strings.ReplaceAll(val, "{{subscription_url}}", subURL)
 	val = strings.ReplaceAll(val, "{{user.trafficLimit}}", fmt.Sprintf("%d", user.TrafficLimitBytes))
+	val = strings.ReplaceAll(val, "{{TRAFFIC_LIMIT_BYTES}}", fmt.Sprintf("%d", user.TrafficLimitBytes))
+	val = strings.ReplaceAll(val, "{{TOTAL_TRAFFIC_BYTES}}", fmt.Sprintf("%d", user.TrafficLimitBytes))
 
 	if strings.HasPrefix(val, "rwEncodeBase64:") {
 		raw := strings.TrimPrefix(val, "rwEncodeBase64:")
@@ -148,9 +185,12 @@ func formatHeaderValue(val string, user *database.User) string {
 	return val
 }
 
+func (h *Handler) formatHeaderValue(val string, user *database.User) string {
+	return formatHeaderValue(val, user, h.subPublicDomain)
+}
+
 func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 	shortUUID := chi.URLParam(r, "shortUuid")
-
 	var user database.User
 	if err := h.db.Preload("Traffic").Where("short_uuid = ?", shortUUID).First(&user).Error; err != nil {
 		w.WriteHeader(http.StatusNotFound)
@@ -193,11 +233,25 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Record request in history
-	clientIP := r.RemoteAddr
-	if colon := strings.LastIndex(clientIP, ":"); colon != -1 {
-		clientIP = clientIP[:colon]
+	// Client IP extraction
+	clientIP := r.Header.Get("CF-Connecting-IP")
+	if clientIP == "" {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			clientIP = strings.TrimSpace(parts[0])
+		}
 	}
+	if clientIP == "" {
+		clientIP = r.Header.Get("X-Real-IP")
+	}
+	if clientIP == "" {
+		clientIP = r.RemoteAddr
+		if colon := strings.LastIndex(clientIP, ":"); colon != -1 {
+			clientIP = clientIP[:colon]
+		}
+	}
+
+	// Record request in history
 	ua := r.Header.Get("User-Agent")
 	go func(uID uint64, ip, userAgent string, ruleName *string, respType string) {
 		h.db.Create(&database.UserSubscriptionRequestHistory{
@@ -210,109 +264,95 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 		})
 	}(user.ID, clientIP, ua, matchedRuleName, matchedResponseType)
 
-	// Handle response types
-	if srrRes.Matched {
-		switch srrRes.ResponseType {
-		case "BLOCK":
-			if srrRes.MatchedRule != nil && srrRes.MatchedRule.ResponseModifications != nil {
-				for _, hm := range srrRes.MatchedRule.ResponseModifications.Headers {
-					w.Header().Set(hm.Key, hm.Value)
-				}
+	// Handle response actions
+	if matchedResponseType == "BLOCK" {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"message":"Subscription access blocked"}`))
+		return
+	} else if matchedResponseType == "STATUS_CODE_404" {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"message":"Not found"}`))
+		return
+	} else if matchedResponseType == "STATUS_CODE_451" {
+		w.WriteHeader(http.StatusUnavailableForLegalReasons)
+		w.Write([]byte(`{"message":"Unavailable for legal reasons"}`))
+		return
+	} else if matchedResponseType == "SOCKET_DROP" {
+		if hj, ok := w.(http.Hijacker); ok {
+			conn, _, _ := hj.Hijack()
+			if conn != nil {
+				conn.Close()
+				return
 			}
-			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"message":"Forbidden"}`))
-			return
+		}
+		return
+	} else if matchedResponseType == "BROWSER" {
+		// Browser subscription redirects to public subscription page
+		subURL := fmt.Sprintf("/%s", user.ShortUUID)
+		http.Redirect(w, r, subURL, http.StatusFound)
+		return
+	}
 
-		case "STATUS_CODE_404":
-			w.WriteHeader(http.StatusNotFound)
-			w.Write([]byte(`{"message":"Not found"}`))
-			return
+	// Prepare Response Headers
+	respHeaders := make(map[string]string)
 
-		case "STATUS_CODE_451":
-			w.WriteHeader(http.StatusUnavailableForLegalReasons)
-			w.Write([]byte(`{"message":"Unavailable For Legal Reasons"}`))
-			return
-
-		case "BROWSER":
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			h.GetSubscriptionInfo(w, r)
-			return
+	// 1. Global SubscriptionSetting Headers (BASE)
+	if settings.CustomResponseHeaders != "" && settings.CustomResponseHeaders != "{}" {
+		var globalHeaders map[string]string
+		if err := json.Unmarshal([]byte(settings.CustomResponseHeaders), &globalHeaders); err == nil {
+			for k, v := range globalHeaders {
+				respHeaders[k] = h.formatHeaderValue(v, &user)
+			}
 		}
 	}
 
-	// Prepare standard subscription headers
+	// 2. External Squad Headers (OVERRIDES BASE)
+	if user.ExternalSquadUUID != nil && *user.ExternalSquadUUID != "" {
+		var squad database.ExternalSquad
+		if err := h.db.Where("uuid = ?", *user.ExternalSquadUUID).First(&squad).Error; err == nil {
+			if squad.ResponseHeadersRemove != "" && squad.ResponseHeadersRemove != "[]" && squad.ResponseHeadersRemove != "{}" {
+				var squadRem []string
+				if err := json.Unmarshal([]byte(squad.ResponseHeadersRemove), &squadRem); err == nil {
+					for _, k := range squadRem {
+						delete(respHeaders, k)
+					}
+				} else {
+					var squadRemMap map[string]interface{}
+					if err := json.Unmarshal([]byte(squad.ResponseHeadersRemove), &squadRemMap); err == nil {
+						for k := range squadRemMap {
+							delete(respHeaders, k)
+						}
+					}
+				}
+			}
+			if squad.ResponseHeadersAdd != "" && squad.ResponseHeadersAdd != "{}" && squad.ResponseHeadersAdd != "[]" {
+				var squadAdd map[string]string
+				if err := json.Unmarshal([]byte(squad.ResponseHeadersAdd), &squadAdd); err == nil {
+					for k, v := range squadAdd {
+						respHeaders[k] = h.formatHeaderValue(v, &user)
+					}
+				}
+			}
+		}
+	}
+
+	// 3. SRR Modifications
+	overrideTmpl := ""
+	if srrRes.Matched && srrRes.MatchedRule != nil && srrRes.MatchedRule.ResponseModifications != nil {
+		mods := srrRes.MatchedRule.ResponseModifications
+		overrideTmpl = mods.SubscriptionTemplate
+		for _, hMod := range mods.Headers {
+			respHeaders[hMod.Key] = h.formatHeaderValue(hMod.Value, &user)
+		}
+	}
+
+	// User-info header standard (Clash / Stash / Sing-box / etc.)
 	var usedBytes uint64
 	if user.Traffic != nil {
 		usedBytes = user.Traffic.UsedTrafficBytes
 	}
-
-	expireUnix := user.ExpireAt.Unix()
-	if user.ExpireAt.Year() >= 2099 || user.ExpireAt.IsZero() {
-		expireUnix = 0
-	}
-	userInfoHeader := fmt.Sprintf("upload=0; download=%d; total=%d; expire=%d",
-		usedBytes, user.TrafficLimitBytes, expireUnix)
-
-	subDomain := h.subDomain
-	if subDomain == "" {
-		subDomain = r.Host
-	}
-	cleanDomain := strings.TrimPrefix(subDomain, "http://")
-	cleanDomain = strings.TrimPrefix(cleanDomain, "https://")
-	cleanDomain = strings.TrimSuffix(cleanDomain, "/api/sub")
-	cleanDomain = strings.TrimSuffix(cleanDomain, "/")
-	scheme := "http"
-	if strings.HasPrefix(h.subDomain, "https://") {
-		scheme = "https"
-	}
-
-	respHeaders := map[string]string{
-		"subscription-userinfo":   userInfoHeader,
-		"profile-update-interval": "12",
-		"profile-title":           user.Username,
-		"content-disposition":     fmt.Sprintf("attachment; filename=%s", user.Username),
-		"profile-web-page-url":    fmt.Sprintf("%s://%s/%s", scheme, cleanDomain, shortUUID),
-	}
-
-	// Apply customResponseHeaders from settings
-	if settings.CustomResponseHeaders != "" && settings.CustomResponseHeaders != "null" {
-		var crh map[string]string
-		if err := json.Unmarshal([]byte(settings.CustomResponseHeaders), &crh); err == nil {
-			for k, v := range crh {
-				respHeaders[strings.ToLower(k)] = formatHeaderValue(v, &user)
-			}
-		}
-	}
-
-	// Apply external squad headers
-	if user.ExternalSquadUUID != nil && *user.ExternalSquadUUID != "" {
-		var extSquad database.ExternalSquad
-		if err := h.db.Where("uuid = ?", *user.ExternalSquadUUID).First(&extSquad).Error; err == nil {
-			if extSquad.ResponseHeadersAdd != "" && extSquad.ResponseHeadersAdd != "null" {
-				var headersAdd map[string]string
-				if err := json.Unmarshal([]byte(extSquad.ResponseHeadersAdd), &headersAdd); err == nil {
-					for k, v := range headersAdd {
-						respHeaders[strings.ToLower(k)] = formatHeaderValue(v, &user)
-					}
-				}
-			}
-			if extSquad.ResponseHeadersRemove != "" && extSquad.ResponseHeadersRemove != "null" {
-				var headersRemove []string
-				if err := json.Unmarshal([]byte(extSquad.ResponseHeadersRemove), &headersRemove); err == nil {
-					for _, k := range headersRemove {
-						delete(respHeaders, strings.ToLower(k))
-					}
-				}
-			}
-		}
-	}
-
-	// Apply SRR rule headers
-	if srrRes.Matched && srrRes.MatchedRule != nil && srrRes.MatchedRule.ResponseModifications != nil {
-		for _, hm := range srrRes.MatchedRule.ResponseModifications.Headers {
-			respHeaders[strings.ToLower(hm.Key)] = hm.Value
-		}
-	}
+	respHeaders["subscription-userinfo"] = fmt.Sprintf("upload=0; download=%d; total=%d; expire=%d",
+		usedBytes, user.TrafficLimitBytes, user.ExpireAt.Unix())
 
 	for k, v := range respHeaders {
 		w.Header().Set(k, v)
@@ -324,10 +364,13 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 
 	targetType := matchedResponseType
 	if targetType == "UNKNOWN" {
-		// Fallback detection by user-agent if SRR didn't match
 		uaLower := strings.ToLower(ua)
-		if strings.Contains(uaLower, "clash") {
-			targetType = "CLASH"
+		if strings.Contains(uaLower, "happ") || strings.Contains(uaLower, "v2raytun") {
+			targetType = "XRAY_JSON"
+		} else if strings.Contains(uaLower, "clash") || strings.Contains(uaLower, "flclash") || strings.Contains(uaLower, "mihomo") {
+			targetType = "MIHOMO"
+		} else if strings.Contains(uaLower, "stash") {
+			targetType = "STASH"
 		} else if strings.Contains(uaLower, "sing-box") || strings.Contains(uaLower, "singbox") {
 			targetType = "SINGBOX"
 		} else {
@@ -335,16 +378,13 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	overrideTmpl := ""
-	if srrRes.Matched && srrRes.MatchedRule != nil && srrRes.MatchedRule.ResponseModifications != nil {
-		overrideTmpl = srrRes.MatchedRule.ResponseModifications.SubscriptionTemplate
-	}
-
 	if targetType == "XRAY_JSON" {
 		contentType = "application/json; charset=utf-8"
 		hostsMeta := h.getHostsWithInboundsForUser(user.ID)
 		tmplJSON := h.getTemplateForUser(&user, "XRAY_JSON", overrideTmpl)
-		jsonBody, err := GenerateXrayJSON(&user, hostsMeta, tmplJSON)
+		jsonBody, err := GenerateXrayJSON(&user, hostsMeta, tmplJSON, func(host *database.Host) string {
+			return h.getHostXrayTemplate(host, tmplJSON)
+		})
 		if err != nil {
 			http.Error(w, `{"message":"Failed to generate xray json"}`, http.StatusInternalServerError)
 			return
@@ -357,7 +397,7 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 		if tmplYAML == "" && targetType != "MIHOMO" {
 			tmplYAML = h.getTemplateForUser(&user, "MIHOMO", overrideTmpl)
 		}
-		yamlBody, err := GenerateMihomoYAML(&user, hostsMeta, tmplYAML)
+		yamlBody, err := GenerateMihomoYAML(&user, hostsMeta, tmplYAML, targetType)
 		if err != nil {
 			http.Error(w, `{"message":"Failed to generate yaml config"}`, http.StatusInternalServerError)
 			return
@@ -365,8 +405,14 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 		body = yamlBody
 	} else if targetType == "SINGBOX" {
 		contentType = "application/json; charset=utf-8"
-		hosts := h.getHostsForUser(user.ID)
-		body = h.generator.generateSingboxJSON(&user, hosts)
+		hostsMeta := h.getHostsWithInboundsForUser(user.ID)
+		tmplJSON := h.getTemplateForUser(&user, "SINGBOX", overrideTmpl)
+		jsonBody, err := GenerateSingboxJSON(&user, hostsMeta, tmplJSON)
+		if err != nil {
+			http.Error(w, `{"message":"Failed to generate singbox json"}`, http.StatusInternalServerError)
+			return
+		}
+		body = jsonBody
 	} else {
 		contentType = "text/plain; charset=utf-8"
 		hosts := h.getHostsForUser(user.ID)
@@ -377,31 +423,132 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(body))
 }
 
-func (h *Handler) GetSubscriptionInfo(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	shortUUID := chi.URLParam(r, "shortUuid")
+type SubscriptionInfoUser struct {
+	ShortUUID                string    `json:"shortUuid"`
+	DaysLeft                 int       `json:"daysLeft"`
+	TrafficUsed              string    `json:"trafficUsed"`
+	TrafficLimit             string    `json:"trafficLimit"`
+	LifetimeTrafficUsed      string    `json:"lifetimeTrafficUsed"`
+	TrafficUsedBytes         string    `json:"trafficUsedBytes"`
+	TrafficLimitBytes        string    `json:"trafficLimitBytes"`
+	LifetimeTrafficUsedBytes string    `json:"lifetimeTrafficUsedBytes"`
+	Username                 string    `json:"username"`
+	ExpiresAt                time.Time `json:"expiresAt"`
+	IsActive                 bool      `json:"isActive"`
+	UserStatus               string    `json:"userStatus"`
+	TrafficLimitStrategy     string    `json:"trafficLimitStrategy"`
+}
 
-	var user database.User
-	if err := h.db.Preload("Traffic").Where("short_uuid = ?", shortUUID).First(&user).Error; err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Subscription not found"})
+type SubscriptionInfoResponse struct {
+	IsFound         bool                 `json:"isFound"`
+	User            SubscriptionInfoUser `json:"user"`
+	Links           []string             `json:"links"`
+	SSConfLinks     map[string]string    `json:"ssConfLinks"`
+	SubscriptionURL string               `json:"subscriptionUrl"`
+}
+
+type SubscriptionInfoWrapper struct {
+	Response SubscriptionInfoResponse `json:"response"`
+}
+
+func (h *Handler) GetSubscriptionInfo(w http.ResponseWriter, r *http.Request) {
+	shortUUID := chi.URLParam(r, "shortUuid")
+	if shortUUID == "" {
+		http.Error(w, `{"message":"Subscription short UUID is required"}`, http.StatusBadRequest)
 		return
 	}
 
-	var usedBytes uint64
-	if user.Traffic != nil {
-		usedBytes = user.Traffic.UsedTrafficBytes
+	var user database.User
+	if err := h.db.Preload("Traffic").Where("short_uuid = ?", shortUUID).First(&user).Error; err != nil {
+		http.Error(w, `{"message":"User not found"}`, http.StatusNotFound)
+		return
 	}
 
-	info := map[string]interface{}{
-		"user": map[string]interface{}{
-			"id":                user.ID,
-			"username":          user.Username,
-			"status":            user.Status,
-			"trafficLimitBytes": user.TrafficLimitBytes,
-			"usedTrafficBytes":  usedBytes,
-			"expireAt":          user.ExpireAt,
-		},
+	daysLeft := 0
+	expiresAt := time.Now().AddDate(1, 0, 0)
+	if !user.ExpireAt.IsZero() {
+		expiresAt = user.ExpireAt
+		daysLeft = int(time.Until(expiresAt).Hours() / 24)
+		if daysLeft < 0 {
+			daysLeft = 0
+		}
 	}
-	json.NewEncoder(w).Encode(info)
+
+	var usedBytes uint64
+	var lifetimeBytes uint64
+	if user.Traffic != nil {
+		usedBytes = user.Traffic.UsedTrafficBytes
+		lifetimeBytes = user.Traffic.LifetimeUsedTrafficBytes
+	}
+
+	trafficLimitStr := "Unlimited"
+	if user.TrafficLimitBytes > 0 {
+		trafficLimitStr = formatBytes(int64(user.TrafficLimitBytes))
+	}
+
+	userStatus := user.Status
+	if userStatus == "" {
+		userStatus = "ACTIVE"
+	}
+	trafficLimitStrategy := user.TrafficLimitStrategy
+	if trafficLimitStrategy == "" {
+		trafficLimitStrategy = "NO_RESET"
+	}
+
+	subscriptionURL := ""
+	if h.subPublicDomain != "" {
+		trimmed := strings.TrimRight(h.subPublicDomain, "/")
+		if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
+			subscriptionURL = fmt.Sprintf("%s/%s", trimmed, user.ShortUUID)
+		} else {
+			subscriptionURL = fmt.Sprintf("https://%s/%s", trimmed, user.ShortUUID)
+		}
+	} else {
+		subscriptionURL = fmt.Sprintf("https://%s/%s", r.Host, user.ShortUUID)
+	}
+
+	hosts := h.getHostsForUser(user.ID)
+	rawLinks := h.generator.generateRawLinks(&user, hosts)
+
+	infoResp := SubscriptionInfoResponse{
+		IsFound: true,
+		User: SubscriptionInfoUser{
+			ShortUUID:                user.ShortUUID,
+			DaysLeft:                 daysLeft,
+			TrafficUsed:              formatBytes(int64(usedBytes)),
+			TrafficLimit:             trafficLimitStr,
+			LifetimeTrafficUsed:      formatBytes(int64(lifetimeBytes)),
+			TrafficUsedBytes:         strconv.FormatUint(usedBytes, 10),
+			TrafficLimitBytes:        strconv.FormatUint(user.TrafficLimitBytes, 10),
+			LifetimeTrafficUsedBytes: strconv.FormatUint(lifetimeBytes, 10),
+			Username:                 user.Username,
+			ExpiresAt:                expiresAt,
+			IsActive:                 user.Status == "ACTIVE",
+			UserStatus:               userStatus,
+			TrafficLimitStrategy:     trafficLimitStrategy,
+		},
+		Links:           rawLinks,
+		SSConfLinks:     map[string]string{},
+		SubscriptionURL: subscriptionURL,
+	}
+
+	resp := SubscriptionInfoWrapper{
+		Response: infoResp,
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.2f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }

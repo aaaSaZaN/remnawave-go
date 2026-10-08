@@ -111,14 +111,8 @@ func formatNodeResponse(service *Service, n *database.Node) map[string]interface
 		configProfileObj["activeInbounds"] = activeIbList
 	}
 
-	cm := n.ConsumptionMultiplier
-	if cm == 0 {
-		cm = 1.0
-	}
-	ncm := n.NodeConsumptionMultiplier
-	if ncm == 0 {
-		ncm = 1.0
-	}
+	cm := NanoToMultiplier(n.ConsumptionMultiplier)
+	ncm := NanoToMultiplier(n.NodeConsumptionMultiplier)
 	vp := n.ViewPosition
 	if vp == 0 {
 		vp = 1
@@ -353,10 +347,10 @@ func (h *Handler) handleUpdateNode(w http.ResponseWriter, r *http.Request, targe
 		updates["country_code"] = *dto.CountryCode
 	}
 	if dto.ConsumptionMultiplier != nil {
-		updates["consumption_multiplier"] = *dto.ConsumptionMultiplier
+		updates["consumption_multiplier"] = MultiplierToNano(*dto.ConsumptionMultiplier)
 	}
 	if dto.NodeConsumptionMultiplier != nil {
-		updates["node_consumption_multiplier"] = *dto.NodeConsumptionMultiplier
+		updates["node_consumption_multiplier"] = MultiplierToNano(*dto.NodeConsumptionMultiplier)
 	}
 	if dto.ProviderUUID != nil {
 		updates["provider_uuid"] = dto.ProviderUUID

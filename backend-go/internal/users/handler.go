@@ -56,9 +56,10 @@ func FormatUser(u *database.User, subPublicDomain string) map[string]interface{}
 		traffic["lastConnectedNodeUuid"] = u.Traffic.LastConnectedNodeUUID
 	}
 
-	subUrl := fmt.Sprintf("http://%s/%s", subPublicDomain, u.ShortUUID)
-	if strings.HasPrefix(subPublicDomain, "http://") || strings.HasPrefix(subPublicDomain, "https://") {
-		subUrl = fmt.Sprintf("%s/%s", subPublicDomain, u.ShortUUID)
+	trimmedDomain := strings.TrimRight(subPublicDomain, "/")
+	subUrl := fmt.Sprintf("https://%s/%s", trimmedDomain, u.ShortUUID)
+	if strings.HasPrefix(trimmedDomain, "http://") || strings.HasPrefix(trimmedDomain, "https://") {
+		subUrl = fmt.Sprintf("%s/%s", trimmedDomain, u.ShortUUID)
 	}
 
 	var lastReset *string
@@ -497,10 +498,48 @@ func (h *Handler) GetUserAccessibleNodes(w http.ResponseWriter, r *http.Request)
 
 func (h *Handler) GetUserSubscriptionRequestHistory(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	idStr := chi.URLParam(r, "userId")
+	if idStr == "" {
+		idStr = chi.URLParam(r, "id")
+	}
+	userId, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		var u database.User
+		if err2 := h.service.db.Where("short_uuid = ? OR username = ?", idStr, idStr).First(&u).Error; err2 == nil {
+			userId = u.ID
+		}
+	}
+
+	type RecordJSON struct {
+		ID              uint64    `json:"id"`
+		UserID          uint64    `json:"userId"`
+		RequestAt       time.Time `json:"requestAt"`
+		RequestIP       *string   `json:"requestIp"`
+		UserAgent       *string   `json:"userAgent"`
+		SrrRuleName     *string   `json:"srrRuleName"`
+		SrrResponseType string    `json:"srrResponseType"`
+	}
+
+	var records []database.UserSubscriptionRequestHistory
+	h.service.db.Where("user_id = ?", userId).Order("request_at desc").Limit(50).Find(&records)
+
+	result := make([]RecordJSON, len(records))
+	for i, rec := range records {
+		result[i] = RecordJSON{
+			ID:              rec.ID,
+			UserID:          rec.UserID,
+			RequestAt:       rec.RequestAt,
+			RequestIP:       rec.RequestIP,
+			UserAgent:       rec.UserAgent,
+			SrrRuleName:     rec.SrrRuleName,
+			SrrResponseType: rec.SrrResponseType,
+		}
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"records": []interface{}{},
-			"total":   0,
+			"records": result,
+			"total":   len(result),
 		},
 	})
 }

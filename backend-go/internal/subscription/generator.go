@@ -32,10 +32,10 @@ func (g *Generator) Generate(user *database.User, hosts []database.Host, userAge
 	return "text/plain; charset=utf-8", g.generateBase64Links(user, hosts)
 }
 
-func (g *Generator) generateBase64Links(user *database.User, hosts []database.Host) string {
+func (g *Generator) generateRawLinks(user *database.User, hosts []database.Host) []string {
 	var lines []string
 	for _, h := range hosts {
-		if h.IsDisabled {
+		if h.IsDisabled || h.IsHidden || IsExcluded(h.ExcludeFromSubscriptionTypes, "XRAY_BASE64") {
 			continue
 		}
 		security := "tls"
@@ -46,7 +46,14 @@ func (g *Generator) generateBase64Links(user *database.User, hosts []database.Ho
 			user.VlessUUID, h.Address, h.Port, security, h.Sni, h.Fingerprint, h.Remark)
 		lines = append(lines, link)
 	}
+	if lines == nil {
+		lines = []string{}
+	}
+	return lines
+}
 
+func (g *Generator) generateBase64Links(user *database.User, hosts []database.Host) string {
+	lines := g.generateRawLinks(user, hosts)
 	raw := strings.Join(lines, "\n")
 	return base64.StdEncoding.EncodeToString([]byte(raw))
 }
@@ -55,7 +62,7 @@ func (g *Generator) generateClashYAML(user *database.User, hosts []database.Host
 	var sb strings.Builder
 	sb.WriteString("proxies:\n")
 	for _, h := range hosts {
-		if h.IsDisabled {
+		if h.IsDisabled || h.IsHidden || IsExcluded(h.ExcludeFromSubscriptionTypes, "CLASH") {
 			continue
 		}
 		sb.WriteString(fmt.Sprintf(`  - name: "%s"
@@ -75,7 +82,7 @@ func (g *Generator) generateClashYAML(user *database.User, hosts []database.Host
 func (g *Generator) generateSingboxJSON(user *database.User, hosts []database.Host) string {
 	var outbounds []string
 	for _, h := range hosts {
-		if h.IsDisabled {
+		if h.IsDisabled || h.IsHidden || IsExcluded(h.ExcludeFromSubscriptionTypes, "SINGBOX") {
 			continue
 		}
 		outbound := fmt.Sprintf(`    {

@@ -70,8 +70,8 @@ APP_PORT=3000
 APP_SECRET=вставьте_сюда_ключ_полученный_из_openssl
 DB_DRIVER=sqlite
 DATABASE_URL=gowave.db
-PANEL_DOMAIN=panel.yourdomain.com ## change to your domain!
-SUB_PUBLIC_DOMAIN=panel.yourdomain.com/api/sub ## change to your domain!
+PANEL_DOMAIN=panel.yourdomain.com ## change to your domain panel!
+SUB_PUBLIC_DOMAIN=panel.yourdomain.com/api/sub ## change to your domain for ur subcruption!
 ```
 *(Чтобы сохранить файл в nano: нажмите `Ctrl+O` ➔ `Enter`, затем для выхода `Ctrl+X`)*.
 

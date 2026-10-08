@@ -70,8 +70,10 @@ func main() {
 		nodeClient, _ = nodes.NewNodeClient([]byte(km.CACert), []byte(km.ClientCert), []byte(km.ClientKey), []byte(km.PrivKey), []byte(km.PubKey))
 	}
 	nodeService := nodes.NewService(db, nodeClient)
+	userService.SetSyncer(nodeService)
 	if nodeClient != nil {
 		go nodeService.StartHealthCheckLoop(cronCtx)
+		go nodeService.SyncAllUsersToConnectedNodes()
 	}
 	nodeHandler := nodes.NewHandler(nodeService)
 	cpService := configprofiles.NewService(db)
