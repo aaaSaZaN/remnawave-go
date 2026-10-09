@@ -64,7 +64,13 @@ export const UpdateNodeModal = NiceModal.create((props: IProps) => {
     const [manualVersion, setManualVersion] = useState<string>('')
     const [confirmed, setConfirmed] = useState<boolean>(false)
 
-    const [nodeRepo, setNodeRepo] = useState<string>('remnawave/node')
+    const isGoNode =
+        (node as any)?.versions?.nodeType === "go" ||
+        (node as any)?.versions?.node?.includes("(Go)")
+
+    const [nodeRepo, setNodeRepo] = useState<string>(
+        isGoNode ? "aaaSaZaN/remnanode-go" : "remnawave/node"
+    )
 
     const [isCustomCoreEnabled, setIsCustomCoreEnabled] = useState<boolean>(false)
     const [customCoreRepo, setCustomCoreRepo] = useState<string>('XTLS/Xray-core')

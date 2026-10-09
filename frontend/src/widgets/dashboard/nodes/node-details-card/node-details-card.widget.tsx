@@ -481,7 +481,12 @@ export const NodeDetailsCardWidget = memo((props: IProps) => {
                                 }}
                             >
                                 <Tooltip
-                                    label={t('node-details-card.widget.remnawave-node-version')}
+                                    label={
+                                        (node as any)?.versions?.nodeType === "go" ||
+                                        node.versions.node?.includes("(Go)")
+                                            ? "Версия ноды, remnanode-go"
+                                            : t("node-details-card.widget.remnawave-node-version")
+                                    }
                                 >
                                     <Group gap="xs" justify="center">
                                         <Logo color="var(--mantine-color-indigo-5)" size={16} />
