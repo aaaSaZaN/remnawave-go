@@ -16,6 +16,29 @@ import (
 	"gorm.io/gorm"
 )
 
+func IsPostgresToSQLiteMigrationCommand(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "--migrate-pg-to-sqlite", "migrate-pg-to-sqlite":
+		return true
+	case "migrate":
+		return len(args) > 1 && (args[1] == "pg-to-sqlite" || args[1] == "postgres-to-sqlite")
+	case "--migrate":
+		return len(args) > 1 && (args[1] == "pg-to-sqlite" || args[1] == "postgres-to-sqlite")
+	default:
+		return false
+	}
+}
+
+func migrationDestination(args []string, index int) string {
+	if len(args) > index && strings.TrimSpace(args[index]) != "" {
+		return strings.TrimSpace(args[index])
+	}
+	return "gowave-migrated.sqlite"
+}
+
 func RunRescue(db *gorm.DB, cfg *config.Config, args []string) {
 	if len(args) > 0 {
 		switch args[0] {
@@ -60,21 +83,23 @@ func RunRescue(db *gorm.DB, cfg *config.Config, args []string) {
 			if len(args) > 1 {
 				dsn = args[1]
 			}
-			if err := MigratePostgresToSQLite(cfg, dsn, "remnawave.db"); err != nil {
+			dest := migrationDestination(args, 2)
+			if err := MigratePostgresToSQLite(cfg, dsn, dest); err != nil {
 				fmt.Printf("[-] Migration failed: %v\n", err)
 				os.Exit(1)
 			}
 			return
-		case "migrate":
+		case "migrate", "--migrate":
 			dsn := ""
+			argOffset := 1
 			if len(args) > 1 && (args[1] == "pg-to-sqlite" || args[1] == "postgres-to-sqlite") {
-				if len(args) > 2 {
-					dsn = args[2]
-				}
-			} else if len(args) > 1 {
-				dsn = args[1]
+				argOffset = 2
 			}
-			if err := MigratePostgresToSQLite(cfg, dsn, "remnawave.db"); err != nil {
+			if len(args) > argOffset {
+				dsn = args[argOffset]
+			}
+			dest := migrationDestination(args, argOffset+1)
+			if err := MigratePostgresToSQLite(cfg, dsn, dest); err != nil {
 				fmt.Printf("[-] Migration failed: %v\n", err)
 				os.Exit(1)
 			}
@@ -101,13 +126,13 @@ func PrintNodeSecretKey(db *gorm.DB) {
 func printUsage() {
 	fmt.Println("Usage: remnawave-server rescue [flag]")
 	fmt.Println("       remnawave-server import pasarguard [path/dsn]")
-	fmt.Println("       remnawave-server migrate pg-to-sqlite [dsn]")
+	fmt.Println("       remnawave-server migrate pg-to-sqlite [dsn] [destination]")
 	fmt.Println("       remnawave-server cli [flag]")
 	fmt.Println("\nAvailable commands / flags:")
 	fmt.Println("  --import-pasarguard [path]       Import users, traffic and HWIDs from PasarGuard (SQLite or Postgres)")
 	fmt.Println("  import pasarguard [path]         Import users, traffic and HWIDs from PasarGuard")
-	fmt.Println("  --migrate-pg-to-sqlite [dsn]     Migrate from Remnawave PostgreSQL to standalone SQLite")
-	fmt.Println("  migrate pg-to-sqlite [dsn]       Migrate from Remnawave PostgreSQL to standalone SQLite")
+	fmt.Println("  --migrate-pg-to-sqlite [dsn] [destination]  Migrate Remnawave PostgreSQL data to SQLite")
+	fmt.Println("  migrate pg-to-sqlite [dsn] [destination]    Migrate Remnawave PostgreSQL data to SQLite")
 	fmt.Println("  --reset-admin                   Remove all admins to re-trigger first-time web onboarding")
 	fmt.Println("  --list-admins                   List all existing administrators")
 	fmt.Println("  --enable-password-auth          Force-enable password authentication in database")

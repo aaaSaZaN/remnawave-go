@@ -406,23 +406,14 @@ func (h *Handler) handleUpdateNode(w http.ResponseWriter, r *http.Request, targe
 		updates["ips"] = string(b)
 	}
 
-	if dto.ConfigProfile != nil {
-		if dto.ConfigProfile.ActiveConfigProfileUUID != nil && *dto.ConfigProfile.ActiveConfigProfileUUID != "" {
-			updates["active_config_profile_uuid"] = dto.ConfigProfile.ActiveConfigProfileUUID
-			h.service.DB().Where("node_uuid = ?", targetUUID).Delete(&database.ConfigProfileInboundsToNodes{})
-			for _, ib := range dto.ConfigProfile.ActiveInbounds {
-				h.service.DB().Create(&database.ConfigProfileInboundsToNodes{
-					ConfigProfileInboundUUID: ib,
-					NodeUUID:                 targetUUID,
-				})
-			}
-		} else {
-			updates["active_config_profile_uuid"] = nil
-			h.service.DB().Where("node_uuid = ?", targetUUID).Delete(&database.ConfigProfileInboundsToNodes{})
-		}
+	var profileUUID *string
+	var activeInbounds []string
+	profileUpdate := dto.ConfigProfile != nil
+	if profileUpdate {
+		profileUUID = dto.ConfigProfile.ActiveConfigProfileUUID
+		activeInbounds = dto.ConfigProfile.ActiveInbounds
 	}
-
-	node, err := h.service.Update(targetUUID, updates)
+	node, err := h.service.UpdateWithConfigProfile(targetUUID, updates, profileUpdate, profileUUID, activeInbounds)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Failed to update node"})
@@ -572,23 +563,16 @@ func (h *Handler) BulkActions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		for _, nodeUuid := range body.UUIDs {
-			updates := map[string]interface{}{}
-			if body.ConfigProfile.ActiveConfigProfileUUID != "" {
-				updates["active_config_profile_uuid"] = body.ConfigProfile.ActiveConfigProfileUUID
-				h.service.DB().Where("node_uuid = ?", nodeUuid).Delete(&database.ConfigProfileInboundsToNodes{})
-				for _, ib := range body.ConfigProfile.ActiveInbounds {
-					h.service.DB().Create(&database.ConfigProfileInboundsToNodes{
-						ConfigProfileInboundUUID: ib,
-						NodeUUID:                 nodeUuid,
-					})
-				}
-			} else {
-				updates["active_config_profile_uuid"] = nil
-				h.service.DB().Where("node_uuid = ?", nodeUuid).Delete(&database.ConfigProfileInboundsToNodes{})
-			}
-
-			if node, err := h.service.Update(nodeUuid, updates); err == nil && !node.IsDisabled {
+		var profileUUID *string
+		if body.ConfigProfile.ActiveConfigProfileUUID != "" {
+			profileUUID = &body.ConfigProfile.ActiveConfigProfileUUID
+		}
+		if err := h.service.BulkUpdateConfigProfile(body.UUIDs, profileUUID, body.ConfigProfile.ActiveInbounds); err != nil {
+			http.Error(w, `{"message":"Failed to update node config profiles"}`, http.StatusBadRequest)
+			return
+		}
+		for _, nodeUUID := range body.UUIDs {
+			if node, err := h.service.GetByUUID(nodeUUID); err == nil && !node.IsDisabled {
 				go h.service.StartNode(node, false)
 			}
 		}

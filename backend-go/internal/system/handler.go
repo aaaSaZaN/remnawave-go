@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 	"time"
 
 	"remnawave-go/internal/database"
@@ -368,7 +370,10 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 	runtime.ReadMemStats(&m)
 
 	var users []database.User
-	h.db.Find(&users)
+	if err := h.db.Find(&users).Error; err != nil {
+		http.Error(w, "failed to load user statistics", http.StatusInternalServerError)
+		return
+	}
 
 	statusCounts := map[string]int{
 		"ACTIVE":   0,
@@ -388,20 +393,24 @@ func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
 		NeverOnline int
 	}
 	var osr OnlineStatsResult
-	h.db.Raw(`
+	now := time.Now().UTC()
+	if err := h.db.Raw(`
 SELECT
-    COUNT(*) FILTER (WHERE ut.online_at >= NOW() - INTERVAL '30 seconds') AS online_now,
-    COUNT(*) FILTER (WHERE ut.online_at >= NOW() - INTERVAL '1 day') AS last_day,
-    COUNT(*) FILTER (WHERE ut.online_at >= NOW() - INTERVAL '1 week') AS last_week,
-    COUNT(*) FILTER (WHERE ut.online_at IS NULL) AS never_online
+    COUNT(CASE WHEN ut.online_at >= ? THEN 1 END) AS online_now,
+    COUNT(CASE WHEN ut.online_at >= ? THEN 1 END) AS last_day,
+    COUNT(CASE WHEN ut.online_at >= ? THEN 1 END) AS last_week,
+    COUNT(CASE WHEN ut.online_at IS NULL THEN 1 END) AS never_online
 FROM users u
-LEFT JOIN user_traffic ut ON ut.id = u.id;
-`).Scan(&osr)
+LEFT JOIN user_traffic ut ON ut.id = u.id`,
+		now.Add(-30*time.Second), now.Add(-24*time.Hour), now.Add(-7*24*time.Hour)).Scan(&osr).Error; err != nil {
+		http.Error(w, "failed to load online statistics", http.StatusInternalServerError)
+		return
+	}
 
-	var totalBytesLifetime string
-	h.db.Raw(`SELECT COALESCE(SUM(total_bytes), 0)::text FROM nodes_usage_history`).Scan(&totalBytesLifetime)
-	if totalBytesLifetime == "" {
-		totalBytesLifetime = "0"
+	var totalBytesLifetime int64
+	if err := h.db.Model(&database.NodesUsageHistory{}).Select("COALESCE(SUM(total_bytes), 0)").Scan(&totalBytesLifetime).Error; err != nil {
+		http.Error(w, "failed to load node traffic statistics", http.StatusInternalServerError)
+		return
 	}
 
 	var resp SystemStatsResponse
@@ -421,7 +430,7 @@ LEFT JOIN user_traffic ut ON ut.id = u.id;
 	resp.Response.OnlineStats.OnlineNow = osr.OnlineNow
 
 	resp.Response.Nodes.TotalOnline = osr.OnlineNow
-	resp.Response.Nodes.TotalBytesLifetime = totalBytesLifetime
+	resp.Response.Nodes.TotalBytesLifetime = fmt.Sprintf("%d", totalBytesLifetime)
 
 	json.NewEncoder(w).Encode(resp)
 }
@@ -496,26 +505,36 @@ func (h *Handler) GetBandwidthStats(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetNodesStatistics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	var rows []NodeDayStat
-	h.db.Raw(`
-SELECT
-    n.name as "node_name",
-    COALESCE(SUM(nu.total_bytes), 0)::text AS "total_bytes",
-    DATE_TRUNC('day', nu.created_at)::date::text AS "date"
-FROM
-    nodes_usage_history AS nu
-JOIN
-    nodes AS n ON nu.node_uuid = n.uuid
-WHERE
-    nu.created_at >= NOW() - INTERVAL '7 days'
-GROUP BY
-    n.name, DATE_TRUNC('day', nu.created_at)::date
-ORDER BY
-    "date" ASC;
-`).Scan(&rows)
-
-	if rows == nil {
-		rows = []NodeDayStat{}
+	type historyRow struct {
+		NodeName   string    `gorm:"column:node_name"`
+		TotalBytes int64     `gorm:"column:total_bytes"`
+		CreatedAt  time.Time `gorm:"column:created_at"`
+	}
+	since := time.Now().UTC().Add(-7 * 24 * time.Hour)
+	var history []historyRow
+	if err := h.db.Table("nodes_usage_history AS nu").
+		Select("n.name AS node_name, nu.total_bytes, nu.created_at").
+		Joins("JOIN nodes AS n ON nu.node_uuid = n.uuid").
+		Where("nu.created_at >= ?", since).
+		Order("nu.created_at ASC, n.name ASC").Scan(&history).Error; err != nil {
+		http.Error(w, "failed to load node history", http.StatusInternalServerError)
+		return
+	}
+	grouped := make(map[string]int64)
+	for _, row := range history {
+		date := row.CreatedAt.UTC().Format("2006-01-02")
+		key := date + "\x00" + row.NodeName
+		grouped[key] += row.TotalBytes
+	}
+	keys := make([]string, 0, len(grouped))
+	for key := range grouped {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	rows := make([]NodeDayStat, 0, len(keys))
+	for _, key := range keys {
+		parts := strings.SplitN(key, "\x00", 2)
+		rows = append(rows, NodeDayStat{Date: parts[0], NodeName: parts[1], TotalBytes: fmt.Sprintf("%d", grouped[key])})
 	}
 
 	var resp NodesStatisticsResponse
@@ -534,44 +553,54 @@ func (h *Handler) GetNodesMetrics(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetRecap(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	var totalUsers int64
 	var newUsersThisMonth int64
-	h.db.Raw(`
-SELECT
-    COUNT(*) AS total_users,
-    COUNT(*) FILTER (WHERE created_at >= date_trunc('month', NOW())) AS new_users_this_month
-FROM users;
-`).Row().Scan(&totalUsers, &newUsersThisMonth)
+	if err := h.db.Model(&database.User{}).Count(&totalUsers).Error; err != nil {
+		http.Error(w, "failed to load user recap", http.StatusInternalServerError)
+		return
+	}
+	if err := h.db.Model(&database.User{}).Where("created_at >= ?", monthStart).Count(&newUsersThisMonth).Error; err != nil {
+		http.Error(w, "failed to load monthly user recap", http.StatusInternalServerError)
+		return
+	}
 
-	var thisMonthTraffic string
-	var totalTraffic string
-	h.db.Raw(`
-SELECT
-    COALESCE(SUM(total_bytes) FILTER (WHERE created_at >= date_trunc('month', NOW())), 0)::text AS this_month_traffic,
-    COALESCE(SUM(total_bytes), 0)::text AS total_traffic
-FROM nodes_usage_history;
-`).Row().Scan(&thisMonthTraffic, &totalTraffic)
+	var thisMonthTrafficBytes, totalTrafficBytes int64
+	if err := h.db.Model(&database.NodesUsageHistory{}).Select("COALESCE(SUM(total_bytes), 0)").Where("created_at >= ?", monthStart).Scan(&thisMonthTrafficBytes).Error; err != nil {
+		http.Error(w, "failed to load monthly traffic recap", http.StatusInternalServerError)
+		return
+	}
+	if err := h.db.Model(&database.NodesUsageHistory{}).Select("COALESCE(SUM(total_bytes), 0)").Scan(&totalTrafficBytes).Error; err != nil {
+		http.Error(w, "failed to load total traffic recap", http.StatusInternalServerError)
+		return
+	}
 
 	var totalNodes int64
 	var distinctCountries int64
-	h.db.Raw(`
-SELECT
-    COUNT(*) AS total_nodes,
-    COUNT(DISTINCT country_code) FILTER (WHERE country_code IS NOT NULL AND country_code != '' AND country_code != 'XX') AS distinct_countries
-FROM nodes;
-`).Row().Scan(&totalNodes, &distinctCountries)
+	if err := h.db.Model(&database.Node{}).Count(&totalNodes).Error; err != nil {
+		http.Error(w, "failed to load node recap", http.StatusInternalServerError)
+		return
+	}
+	if err := h.db.Raw(`SELECT COUNT(DISTINCT CASE WHEN country_code IS NOT NULL AND country_code != '' AND country_code != 'XX' THEN country_code END) FROM nodes`).Scan(&distinctCountries).Error; err != nil {
+		http.Error(w, "failed to load country recap", http.StatusInternalServerError)
+		return
+	}
 
 	var initDate time.Time
-	if err := h.db.Raw(`SELECT started_at FROM _prisma_migrations ORDER BY started_at ASC LIMIT 1`).Scan(&initDate).Error; err != nil || initDate.IsZero() {
+	if h.db.Migrator().HasTable("_prisma_migrations") {
+		_ = h.db.Raw(`SELECT started_at FROM _prisma_migrations ORDER BY started_at ASC LIMIT 1`).Scan(&initDate).Error
+	}
+	if initDate.IsZero() {
 		initDate = startTime
 	}
 
 	var resp RecapResponse
 	resp.Response.ThisMonth.Users = int(newUsersThisMonth)
-	resp.Response.ThisMonth.Traffic = thisMonthTraffic
+	resp.Response.ThisMonth.Traffic = fmt.Sprintf("%d", thisMonthTrafficBytes)
 	resp.Response.Total.Users = int(totalUsers)
 	resp.Response.Total.Nodes = int(totalNodes)
-	resp.Response.Total.Traffic = totalTraffic
+	resp.Response.Total.Traffic = fmt.Sprintf("%d", totalTrafficBytes)
 	resp.Response.Total.NodesRam = "0 B"
 	resp.Response.Total.NodesCpuCores = 0
 	resp.Response.Total.DistinctCountries = int(distinctCountries)

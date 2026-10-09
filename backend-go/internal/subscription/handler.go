@@ -80,24 +80,50 @@ func (h *Handler) getHostsForUser(userID uint64) []database.Host {
 		return nil
 	}
 
+	allSquadUUIDs := make([]string, 0)
+	seenSquads := make(map[string]struct{})
+	for _, squadUUIDs := range squadsByInbound {
+		for _, squadUUID := range squadUUIDs {
+			if _, exists := seenSquads[squadUUID]; exists {
+				continue
+			}
+			seenSquads[squadUUID] = struct{}{}
+			allSquadUUIDs = append(allSquadUUIDs, squadUUID)
+		}
+	}
+
+	type hostSquadLink struct {
+		HostUUID  string `gorm:"column:host_uuid"`
+		SquadUUID string `gorm:"column:squad_uuid"`
+	}
+	var hostSquadLinks []hostSquadLink
+	if err := h.db.Table("internal_squad_host_links").
+		Select("host_uuid, squad_uuid").
+		Where("squad_uuid IN ?", allSquadUUIDs).
+		Scan(&hostSquadLinks).Error; err != nil {
+		log.Printf("[SUBSCRIPTION] failed to resolve host squad links for user id=%d: %v", userID, err)
+		return nil
+	}
+	hostSquads := make(map[string]map[string]struct{})
+	for _, link := range hostSquadLinks {
+		if hostSquads[link.HostUUID] == nil {
+			hostSquads[link.HostUUID] = make(map[string]struct{})
+		}
+		hostSquads[link.HostUUID][link.SquadUUID] = struct{}{}
+	}
+
 	availableHosts := make([]database.Host, 0, len(hosts))
 	for _, host := range hosts {
-		userSquads := squadsByInbound[host.ConfigProfileInboundUUID]
+		inboundUUID := ""
+		if host.ConfigProfileInboundUUID != nil {
+			inboundUUID = *host.ConfigProfileInboundUUID
+		}
+		userSquads := squadsByInbound[inboundUUID]
 		if len(userSquads) == 0 {
 			continue
 		}
 
-		var selectedSquadUUIDs []string
-		if raw := strings.TrimSpace(host.InternalSquads); raw != "" && raw != "null" {
-			if err := json.Unmarshal([]byte(raw), &selectedSquadUUIDs); err != nil {
-				log.Printf("[SUBSCRIPTION] invalid internal squad list for host uuid=%s: %v", host.UUID, err)
-				continue
-			}
-		}
-		selectedSquads := make(map[string]struct{}, len(selectedSquadUUIDs))
-		for _, squadUUID := range selectedSquadUUIDs {
-			selectedSquads[squadUUID] = struct{}{}
-		}
+		selectedSquads := hostSquads[host.UUID]
 
 		allowOnly := strings.EqualFold(strings.TrimSpace(host.InternalSquadsMode), "ALLOW_ONLY")
 		for _, squadUUID := range userSquads {
@@ -120,8 +146,8 @@ func (h *Handler) getHostsWithInboundsForUser(userID uint64) []XrayHostMeta {
 
 	inboundUUIDs := make([]string, 0, len(hosts))
 	for _, host := range hosts {
-		if host.ConfigProfileInboundUUID != "" {
-			inboundUUIDs = append(inboundUUIDs, host.ConfigProfileInboundUUID)
+		if host.ConfigProfileInboundUUID != nil && *host.ConfigProfileInboundUUID != "" {
+			inboundUUIDs = append(inboundUUIDs, *host.ConfigProfileInboundUUID)
 		}
 	}
 
@@ -136,7 +162,10 @@ func (h *Handler) getHostsWithInboundsForUser(userID uint64) []XrayHostMeta {
 
 	result := make([]XrayHostMeta, 0, len(hosts))
 	for i := range hosts {
-		if val, ok := inboundMap[hosts[i].ConfigProfileInboundUUID]; ok {
+		if hosts[i].ConfigProfileInboundUUID == nil {
+			continue
+		}
+		if val, ok := inboundMap[*hosts[i].ConfigProfileInboundUUID]; ok {
 			result = append(result, XrayHostMeta{
 				Host:    &hosts[i],
 				Inbound: &val,
@@ -180,9 +209,9 @@ func (h *Handler) getTemplateForUser(user *database.User, templateType string, o
 }
 
 func (h *Handler) getHostXrayTemplate(host *database.Host, defaultTmplJSON string) string {
-	if host.XrayJsonTemplateUUID != "" {
+	if host.XrayJsonTemplateUUID != nil && *host.XrayJsonTemplateUUID != "" {
 		var tmpl database.SubscriptionTemplate
-		if err := h.db.Where("uuid = ?", host.XrayJsonTemplateUUID).First(&tmpl).Error; err == nil && tmpl.TemplateJson != "" && tmpl.TemplateJson != "{}" && tmpl.TemplateJson != "null" {
+		if err := h.db.Where("uuid = ?", *host.XrayJsonTemplateUUID).First(&tmpl).Error; err == nil && tmpl.TemplateJson != "" && tmpl.TemplateJson != "{}" && tmpl.TemplateJson != "null" {
 			return tmpl.TemplateJson
 		}
 	}
@@ -418,20 +447,8 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 	if user.ExternalSquadUUID != nil && *user.ExternalSquadUUID != "" {
 		var squad database.ExternalSquad
 		if err := h.db.Where("uuid = ?", *user.ExternalSquadUUID).First(&squad).Error; err == nil {
-			if squad.ResponseHeadersRemove != "" && squad.ResponseHeadersRemove != "[]" && squad.ResponseHeadersRemove != "{}" {
-				var squadRem []string
-				if err := json.Unmarshal([]byte(squad.ResponseHeadersRemove), &squadRem); err == nil {
-					for _, k := range squadRem {
-						delete(respHeaders, k)
-					}
-				} else {
-					var squadRemMap map[string]interface{}
-					if err := json.Unmarshal([]byte(squad.ResponseHeadersRemove), &squadRemMap); err == nil {
-						for k := range squadRemMap {
-							delete(respHeaders, k)
-						}
-					}
-				}
+			for _, key := range squad.ResponseHeadersRemove {
+				delete(respHeaders, key)
 			}
 			if squad.ResponseHeadersAdd != "" && squad.ResponseHeadersAdd != "{}" && squad.ResponseHeadersAdd != "[]" {
 				var squadAdd map[string]string

@@ -136,6 +136,17 @@ func (s *Service) CreateHostFromInput(input CreateHostInput) (*database.Host, er
 	if input.XrayJsonTemplateUUID != nil {
 		xrayTmpl = *input.XrayJsonTemplateUUID
 	}
+	var xrayTmplUUID *string
+	if xrayTmpl != "" {
+		xrayTmplUUID = &xrayTmpl
+	}
+	var profileUUIDValue, inboundUUIDValue *string
+	if profileUUID != "" {
+		profileUUIDValue = &profileUUID
+	}
+	if inboundUUID != "" {
+		inboundUUIDValue = &inboundUUID
+	}
 
 	var isDisabled, isHidden, overrideSni, keepSni, shuffleHost, mihomoX25519 bool
 	if input.IsDisabled != nil {
@@ -157,9 +168,7 @@ func (s *Service) CreateHostFromInput(input CreateHostInput) (*database.Host, er
 		mihomoX25519 = *input.MihomoX25519
 	}
 
-	tagsBytes, _ := json.Marshal(input.Tags)
 	nodesBytes, _ := json.Marshal(input.Nodes)
-	excludeBytes, _ := json.Marshal(input.ExcludeFromSubscriptionTypes)
 
 	mapperStr := "{}"
 	if len(input.Mapper) > 0 && string(input.Mapper) != "null" {
@@ -201,27 +210,82 @@ func (s *Service) CreateHostFromInput(input CreateHostInput) (*database.Host, er
 		ShuffleHost:                  shuffleHost,
 		MihomoX25519:                 mihomoX25519,
 		MihomoIpVersion:              mihomoIp,
-		XrayJsonTemplateUUID:         xrayTmpl,
+		XrayJsonTemplateUUID:         xrayTmplUUID,
 		KeepSniBlank:                 keepSni,
-		ExcludeFromSubscriptionTypes: string(excludeBytes),
+		ExcludeFromSubscriptionTypes: database.StringArray(input.ExcludeFromSubscriptionTypes),
 		Mapper:                       mapperStr,
 		InternalSquadsMode:           squadsMode,
 		InternalSquads:               squadsStr,
-		Tags:                         string(tagsBytes),
+		Tags:                         database.StringArray(input.Tags),
 		Nodes:                        string(nodesBytes),
 		IsHidden:                     isHidden,
 		OverrideSniFromAddress:       overrideSni,
-		ConfigProfileUUID:            profileUUID,
-		ConfigProfileInboundUUID:     inboundUUID,
+		ConfigProfileUUID:            profileUUIDValue,
+		ConfigProfileInboundUUID:     inboundUUIDValue,
 		CreatedAt:                    now,
 		UpdatedAt:                    now,
 	}
 
-	err := s.db.Create(h).Error
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(h).Error; err != nil {
+			return err
+		}
+		var squadUUIDs []string
+		if input.InternalSquads != nil {
+			squadUUIDs = input.InternalSquads.Squads
+		}
+		return replaceHostRelations(tx, h.UUID, input.Nodes, squadUUIDs)
+	})
 	if err != nil {
 		return nil, err
 	}
 	return h, nil
+}
+
+func replaceHostRelations(tx *gorm.DB, hostUUID string, nodeUUIDs, squadUUIDs []string) error {
+	if err := tx.Where("host_uuid = ?", hostUUID).Delete(&database.HostsToNode{}).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("host_uuid = ?", hostUUID).Delete(&database.InternalSquadHostLink{}).Error; err != nil {
+		return err
+	}
+
+	nodeLinks := make([]database.HostsToNode, 0, len(nodeUUIDs))
+	seenNodes := make(map[string]struct{}, len(nodeUUIDs))
+	for _, uuid := range nodeUUIDs {
+		if uuid == "" {
+			continue
+		}
+		if _, exists := seenNodes[uuid]; exists {
+			continue
+		}
+		seenNodes[uuid] = struct{}{}
+		nodeLinks = append(nodeLinks, database.HostsToNode{HostUUID: hostUUID, NodeUUID: uuid})
+	}
+	if len(nodeLinks) > 0 {
+		if err := tx.Create(&nodeLinks).Error; err != nil {
+			return err
+		}
+	}
+
+	squadLinks := make([]database.InternalSquadHostLink, 0, len(squadUUIDs))
+	seenSquads := make(map[string]struct{}, len(squadUUIDs))
+	for _, uuid := range squadUUIDs {
+		if uuid == "" {
+			continue
+		}
+		if _, exists := seenSquads[uuid]; exists {
+			continue
+		}
+		seenSquads[uuid] = struct{}{}
+		squadLinks = append(squadLinks, database.InternalSquadHostLink{HostUUID: hostUUID, SquadUUID: uuid})
+	}
+	if len(squadLinks) > 0 {
+		if err := tx.Create(&squadLinks).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Service) CreateHost(dto CreateHostDTO) (*database.Host, error) {
@@ -265,7 +329,15 @@ func (s *Service) UpdateHost(uuid string, updates map[string]interface{}) (*data
 }
 
 func (s *Service) DeleteHost(uuid string) error {
-	return s.db.Where("uuid = ?", uuid).Delete(&database.Host{}).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("host_uuid = ?", uuid).Delete(&database.HostsToNode{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("host_uuid = ?", uuid).Delete(&database.InternalSquadHostLink{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("uuid = ?", uuid).Delete(&database.Host{}).Error
+	})
 }
 
 func (s *Service) GetAllProfiles() ([]database.ConfigProfile, error) {
@@ -305,17 +377,20 @@ func (s *Service) CreateProfile(name string, configMap map[string]interface{}) (
 		UUID:         profileUUID,
 		ViewPosition: maxPos + 1,
 		Name:         name,
-		Tags:         "[]",
+		Tags:         database.StringArray{},
 		Config:       string(configBytes),
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
 
-	if err := s.db.Create(profile).Error; err != nil {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(profile).Error; err != nil {
+			return err
+		}
+		return syncInbounds(tx, profileUUID, configMap, true)
+	}); err != nil {
 		return nil, err
 	}
-
-	s.syncInbounds(profileUUID, configMap)
 	return profile, nil
 }
 
@@ -339,10 +414,17 @@ func (s *Service) UpdateProfile(uuidParam string, name *string, configMap map[st
 			return nil, fmt.Errorf("invalid config json: %w", err)
 		}
 		updates["config"] = string(configBytes)
-		s.syncInbounds(profile.UUID, configMap)
 	}
 
-	if err := s.db.Model(&database.ConfigProfile{}).Where("uuid = ?", profile.UUID).Updates(updates).Error; err != nil {
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&database.ConfigProfile{}).Where("uuid = ?", profile.UUID).Updates(updates).Error; err != nil {
+			return err
+		}
+		if configMap != nil {
+			return syncInbounds(tx, profile.UUID, configMap, false)
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 
@@ -350,18 +432,35 @@ func (s *Service) UpdateProfile(uuidParam string, name *string, configMap map[st
 }
 
 func (s *Service) DeleteProfile(uuidParam string) error {
-	s.db.Where("profile_uuid = ?", uuidParam).Delete(&database.ConfigProfileInbound{})
-	return s.db.Where("uuid = ?", uuidParam).Delete(&database.ConfigProfile{}).Error
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("profile_uuid = ?", uuidParam).Delete(&database.ConfigProfileInbound{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("uuid = ?", uuidParam).Delete(&database.ConfigProfile{}).Error
+	})
 }
 
-func (s *Service) syncInbounds(profileUUID string, configMap map[string]interface{}) {
-	s.db.Where("profile_uuid = ?", profileUUID).Delete(&database.ConfigProfileInbound{})
-
+func syncInbounds(tx *gorm.DB, profileUUID string, configMap map[string]interface{}, creating bool) error {
 	inboundsRaw, ok := configMap["inbounds"].([]interface{})
 	if !ok {
-		return
+		if creating {
+			return nil
+		}
+		if _, supplied := configMap["inbounds"]; !supplied {
+			return nil
+		}
+		inboundsRaw = []interface{}{}
+	}
+	var existing []database.ConfigProfileInbound
+	if err := tx.Where("profile_uuid = ?", profileUUID).Find(&existing).Error; err != nil {
+		return err
+	}
+	existingByTag := make(map[string]database.ConfigProfileInbound, len(existing))
+	for _, inbound := range existing {
+		existingByTag[inbound.Tag] = inbound
 	}
 
+	seenTags := make(map[string]struct{}, len(inboundsRaw))
 	for _, item := range inboundsRaw {
 		ibMap, ok := item.(map[string]interface{})
 		if !ok {
@@ -370,6 +469,13 @@ func (s *Service) syncInbounds(profileUUID string, configMap map[string]interfac
 
 		tag, _ := ibMap["tag"].(string)
 		proto, _ := ibMap["protocol"].(string)
+		if strings.TrimSpace(tag) == "" || strings.TrimSpace(proto) == "" {
+			return fmt.Errorf("inbound tag and protocol are required")
+		}
+		if _, exists := seenTags[tag]; exists {
+			return fmt.Errorf("duplicate inbound tag %q", tag)
+		}
+		seenTags[tag] = struct{}{}
 
 		var network *string
 		var security *string
@@ -391,9 +497,11 @@ func (s *Service) syncInbounds(profileUUID string, configMap map[string]interfac
 		}
 
 		ibUUID := uuid.NewString()
-		rawBytes, _ := json.Marshal(ibMap)
-
-		s.db.Create(&database.ConfigProfileInbound{
+		rawBytes, err := json.Marshal(ibMap)
+		if err != nil {
+			return err
+		}
+		inbound := database.ConfigProfileInbound{
 			UUID:        ibUUID,
 			ProfileUUID: profileUUID,
 			Tag:         tag,
@@ -402,8 +510,32 @@ func (s *Service) syncInbounds(profileUUID string, configMap map[string]interfac
 			Security:    security,
 			Port:        port,
 			RawInbound:  string(rawBytes),
-		})
+		}
+		if previous, exists := existingByTag[tag]; exists {
+			inbound.UUID = previous.UUID
+			if err := tx.Model(&database.ConfigProfileInbound{}).Where("uuid = ?", previous.UUID).Updates(map[string]interface{}{
+				"tag":         inbound.Tag,
+				"type":        inbound.Type,
+				"network":     inbound.Network,
+				"security":    inbound.Security,
+				"port":        inbound.Port,
+				"raw_inbound": inbound.RawInbound,
+			}).Error; err != nil {
+				return err
+			}
+		} else if err := tx.Create(&inbound).Error; err != nil {
+			return err
+		}
 	}
+	for _, oldInbound := range existing {
+		if _, stillExists := seenTags[oldInbound.Tag]; stillExists {
+			continue
+		}
+		if err := tx.Where("uuid = ?", oldInbound.UUID).Delete(&database.ConfigProfileInbound{}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Service) GetInboundsByProfileUUID(uuidParam string) ([]database.ConfigProfileInbound, error) {
@@ -419,8 +551,7 @@ func (s *Service) GetAllInbounds() ([]database.ConfigProfileInbound, error) {
 }
 
 func (s *Service) SetProfileTags(uuidParam string, tags []string) error {
-	b, _ := json.Marshal(tags)
-	return s.db.Model(&database.ConfigProfile{}).Where("uuid = ?", uuidParam).Update("tags", string(b)).Error
+	return s.db.Model(&database.ConfigProfile{}).Where("uuid = ?", uuidParam).Update("tags", database.StringArray(tags)).Error
 }
 
 type PreviewRequest struct {

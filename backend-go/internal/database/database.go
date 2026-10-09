@@ -33,6 +33,9 @@ func Init(driver string, databaseURL string) (*gorm.DB, error) {
 			// SQLite in concurrent environment: limit to 1 open connection to avoid database is locked
 			sqlDB.SetMaxOpenConns(1)
 			sqlDB.SetMaxIdleConns(1)
+			if err := db.Exec("PRAGMA foreign_keys = ON").Error; err != nil {
+				return nil, err
+			}
 		} else {
 			sqlDB.SetMaxOpenConns(50)
 			sqlDB.SetMaxIdleConns(10)

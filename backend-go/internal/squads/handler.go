@@ -41,15 +41,11 @@ func uniqueInboundUUIDs(inboundUUIDs []string) []string {
 	return result
 }
 
-func internalSquadTags(raw string) []string {
-	if raw == "" {
+func internalSquadTags(raw database.StringArray) []string {
+	if raw == nil {
 		return []string{}
 	}
-	var tags database.StringArray
-	if err := tags.Scan(raw); err == nil {
-		return []string(tags)
-	}
-	return []string{}
+	return []string(raw)
 }
 
 func formatInternalSquad(db *gorm.DB, s *database.InternalSquad) map[string]interface{} {
@@ -163,7 +159,7 @@ func (h *Handler) CreateInternalSquad(w http.ResponseWriter, r *http.Request) {
 		UUID:         newUUID,
 		ViewPosition: int(count) + 1,
 		Name:         strings.TrimSpace(body.Name),
-		Tags:         "[]",
+		Tags:         database.StringArray{},
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -286,9 +282,22 @@ func (h *Handler) UpdateInternalSquad(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) DeleteInternalSquad(w http.ResponseWriter, r *http.Request) {
 	uuidParam := chi.URLParam(r, "uuid")
-	h.db.Where("internal_squad_uuid = ?", uuidParam).Delete(&database.InternalSquadInbound{})
-	h.db.Where("internal_squad_uuid = ?", uuidParam).Delete(&database.InternalSquadMember{})
-	h.db.Where("uuid = ?", uuidParam).Delete(&database.InternalSquad{})
+	if err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("squad_uuid = ?", uuidParam).Delete(&database.InternalSquadHostLink{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("internal_squad_uuid = ?", uuidParam).Delete(&database.InternalSquadInbound{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("internal_squad_uuid = ?", uuidParam).Delete(&database.InternalSquadMember{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("uuid = ?", uuidParam).Delete(&database.InternalSquad{}).Error
+	}); err != nil {
+		log.Printf("[SQUADS] failed to delete squad uuid=%s: %v", uuidParam, err)
+		http.Error(w, `{"message":"Failed to delete squad"}`, http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -502,10 +511,7 @@ func (h *Handler) SquadBulkAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func formatExternalSquad(db *gorm.DB, s *database.ExternalSquad) map[string]interface{} {
-	tags := []string{}
-	if s.Tags != "" {
-		_ = json.Unmarshal([]byte(s.Tags), &tags)
-	}
+	tags := []string(s.Tags)
 
 	var subSettings interface{}
 	if s.SubscriptionSettings != "" && s.SubscriptionSettings != "null" {
@@ -525,10 +531,7 @@ func formatExternalSquad(db *gorm.DB, s *database.ExternalSquad) map[string]inte
 		respHeadersAdd = map[string]interface{}{}
 	}
 
-	respHeadersRemove := []string{}
-	if s.ResponseHeadersRemove != "" {
-		_ = json.Unmarshal([]byte(s.ResponseHeadersRemove), &respHeadersRemove)
-	}
+	respHeadersRemove := []string(s.ResponseHeadersRemove)
 
 	var hwidSettings interface{}
 	if s.HwidSettings != "" && s.HwidSettings != "null" {
@@ -634,11 +637,11 @@ func (h *Handler) CreateExternalSquad(w http.ResponseWriter, r *http.Request) {
 		UUID:                  newUUID,
 		ViewPosition:          int(count) + 1,
 		Name:                  strings.TrimSpace(body.Name),
-		Tags:                  "[]",
+		Tags:                  database.StringArray{},
 		SubscriptionSettings:  "{}",
 		HostOverrides:         "{}",
 		ResponseHeadersAdd:    "{}",
-		ResponseHeadersRemove: "[]",
+		ResponseHeadersRemove: database.StringArray{},
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}
@@ -733,17 +736,13 @@ func (h *Handler) UpdateExternalSquad(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if rawValue, present := rawFields["responseHeadersRemove"]; present {
-		var compact bytes.Buffer
-		if err := json.Compact(&compact, rawValue); err != nil {
+		var responseHeadersRemove []string
+		if err := json.Unmarshal(rawValue, &responseHeadersRemove); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(map[string]interface{}{"message": "Invalid body"})
 			return
 		}
-		if h.db.Dialector.Name() == "postgres" {
-			updates["response_headers_remove"] = gorm.Expr("ARRAY(SELECT jsonb_array_elements_text(?::jsonb))", compact.String())
-		} else {
-			updates["response_headers_remove"] = compact.String()
-		}
+		updates["response_headers_remove"] = database.StringArray(responseHeadersRemove)
 	}
 	if rawValue, present := rawFields["subpageConfigUuid"]; present {
 		if bytes.Equal(bytes.TrimSpace(rawValue), []byte("null")) {
@@ -836,13 +835,8 @@ func (h *Handler) GetExternalSquadsTags(w http.ResponseWriter, r *http.Request) 
 
 	tagMap := make(map[string]bool)
 	for _, s := range squads {
-		if s.Tags != "" {
-			var tags []string
-			if err := json.Unmarshal([]byte(s.Tags), &tags); err == nil {
-				for _, tag := range tags {
-					tagMap[tag] = true
-				}
-			}
+		for _, tag := range s.Tags {
+			tagMap[tag] = true
 		}
 	}
 
@@ -871,8 +865,7 @@ func (h *Handler) SetExternalSquadsTags(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tagsBytes, _ := json.Marshal(body.Tags)
-	h.db.Model(&database.ExternalSquad{}).Where("uuid = ?", body.UUID).Update("tags", string(tagsBytes))
+	h.db.Model(&database.ExternalSquad{}).Where("uuid = ?", body.UUID).Update("tags", database.StringArray(body.Tags))
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{

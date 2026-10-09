@@ -22,12 +22,8 @@ func NewHandler(db *gorm.DB) *Handler {
 	return &Handler{db: db}
 }
 
-
 func formatTemplateResponse(t *database.SubscriptionTemplate) map[string]interface{} {
-	var tags []string
-	if t.Tags != "" {
-		_ = json.Unmarshal([]byte(t.Tags), &tags)
-	}
+	tags := []string(t.Tags)
 	if tags == nil {
 		tags = []string{}
 	}
@@ -135,7 +131,7 @@ func (h *Handler) CreateTemplate(w http.ResponseWriter, r *http.Request) {
 		UUID:         newUUID,
 		ViewPosition: int(count) + 1,
 		Name:         strings.TrimSpace(body.Name),
-		Tags:         "[]",
+		Tags:         database.StringArray{},
 		TemplateType: body.TemplateType,
 		TemplateYaml: defaultYaml,
 		TemplateJson: defaultJson,
@@ -251,13 +247,8 @@ func (h *Handler) GetTemplateTags(w http.ResponseWriter, r *http.Request) {
 
 	tagMap := make(map[string]bool)
 	for _, t := range templates {
-		if t.Tags != "" {
-			var tags []string
-			if err := json.Unmarshal([]byte(t.Tags), &tags); err == nil {
-				for _, tag := range tags {
-					tagMap[tag] = true
-				}
-			}
+		for _, tag := range t.Tags {
+			tagMap[tag] = true
 		}
 	}
 
@@ -286,8 +277,7 @@ func (h *Handler) SetTemplateTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tagsBytes, _ := json.Marshal(body.Tags)
-	h.db.Model(&database.SubscriptionTemplate{}).Where("uuid = ?", body.UUID).Update("tags", string(tagsBytes))
+	h.db.Model(&database.SubscriptionTemplate{}).Where("uuid = ?", body.UUID).Update("tags", database.StringArray(body.Tags))
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
@@ -297,12 +287,8 @@ func (h *Handler) SetTemplateTags(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
 func formatSubpageConfigResponse(c *database.SubscriptionPageConfig) map[string]interface{} {
-	var tags []string
-	if c.Tags != "" {
-		_ = json.Unmarshal([]byte(c.Tags), &tags)
-	}
+	tags := []string(c.Tags)
 	if tags == nil {
 		tags = []string{}
 	}
@@ -381,7 +367,7 @@ func (h *Handler) CreateConfig(w http.ResponseWriter, r *http.Request) {
 		UUID:         newUUID,
 		ViewPosition: int(count) + 1,
 		Name:         strings.TrimSpace(body.Name),
-		Tags:         "[]",
+		Tags:         database.StringArray{},
 		Config:       database.DefaultSubpageConfigData,
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -531,13 +517,8 @@ func (h *Handler) GetConfigTags(w http.ResponseWriter, r *http.Request) {
 
 	tagMap := make(map[string]bool)
 	for _, c := range configs {
-		if c.Tags != "" {
-			var tags []string
-			if err := json.Unmarshal([]byte(c.Tags), &tags); err == nil {
-				for _, tag := range tags {
-					tagMap[tag] = true
-				}
-			}
+		for _, tag := range c.Tags {
+			tagMap[tag] = true
 		}
 	}
 
@@ -566,8 +547,7 @@ func (h *Handler) SetConfigTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tagsBytes, _ := json.Marshal(body.Tags)
-	h.db.Model(&database.SubscriptionPageConfig{}).Where("uuid = ?", body.UUID).Update("tags", string(tagsBytes))
+	h.db.Model(&database.SubscriptionPageConfig{}).Where("uuid = ?", body.UUID).Update("tags", database.StringArray(body.Tags))
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{

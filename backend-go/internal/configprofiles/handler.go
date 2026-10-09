@@ -9,6 +9,7 @@ import (
 	"remnawave-go/internal/database"
 
 	"github.com/go-chi/chi/v5"
+	"gorm.io/gorm"
 )
 
 type Handler struct {
@@ -76,10 +77,7 @@ func (h *Handler) formatProfile(p *database.ConfigProfile) ProfileResponse {
 		cfg = map[string]interface{}{}
 	}
 
-	tags := []string{}
-	if p.Tags != "" {
-		_ = json.Unmarshal([]byte(p.Tags), &tags)
-	}
+	tags := []string(p.Tags)
 	if tags == nil {
 		tags = []string{}
 	}
@@ -125,15 +123,10 @@ func (h *Handler) GetConfigProfilesTags(w http.ResponseWriter, r *http.Request) 
 	profiles, _ := h.service.GetAllProfiles()
 	tagSet := make(map[string]bool)
 	for _, p := range profiles {
-		if p.Tags != "" {
-			var pTags []string
-			if err := json.Unmarshal([]byte(p.Tags), &pTags); err == nil {
-				for _, t := range pTags {
-					if t != "" && !tagSet[t] {
-						tagSet[t] = true
-						tags = append(tags, t)
-					}
-				}
+		for _, t := range p.Tags {
+			if t != "" && !tagSet[t] {
+				tagSet[t] = true
+				tags = append(tags, t)
 			}
 		}
 	}
@@ -371,7 +364,6 @@ func (h *Handler) GetComputedConfig(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
 func (h *Handler) GetHostsTags(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -386,6 +378,13 @@ func nullableString(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+func nullableStringPtr(s *string) *string {
+	if s == nil || *s == "" {
+		return nil
+	}
+	return s
 }
 
 func nullableAlpn(s string) *string {
@@ -406,7 +405,7 @@ func nullableMihomoIpVersion(s string) *string {
 	}
 }
 
-func formatHostResponse(h *database.Host) map[string]interface{} {
+func formatHostResponse(db *gorm.DB, h *database.Host) (map[string]interface{}, error) {
 	viewPos := h.ViewPosition
 	if viewPos <= 0 {
 		viewPos = 1
@@ -433,26 +432,22 @@ func formatHostResponse(h *database.Host) map[string]interface{} {
 		_ = json.Unmarshal([]byte(h.FinalMask), &finalMask)
 	}
 
-	tags := []string{}
-	if h.Tags != "" && h.Tags != "null" {
-		_ = json.Unmarshal([]byte(h.Tags), &tags)
-	}
+	tags := []string(h.Tags)
 	if tags == nil {
 		tags = []string{}
 	}
 
-	nodes := []string{}
-	if h.Nodes != "" && h.Nodes != "null" {
-		_ = json.Unmarshal([]byte(h.Nodes), &nodes)
+	var nodes []string
+	if err := db.Model(&database.HostsToNode{}).
+		Where("host_uuid = ?", h.UUID).
+		Order("node_uuid ASC").Pluck("node_uuid", &nodes).Error; err != nil {
+		return nil, err
 	}
 	if nodes == nil {
 		nodes = []string{}
 	}
 
-	excludeTypes := []string{}
-	if h.ExcludeFromSubscriptionTypes != "" && h.ExcludeFromSubscriptionTypes != "null" {
-		_ = json.Unmarshal([]byte(h.ExcludeFromSubscriptionTypes), &excludeTypes)
-	}
+	excludeTypes := []string(h.ExcludeFromSubscriptionTypes)
 	if excludeTypes == nil {
 		excludeTypes = []string{}
 	}
@@ -465,9 +460,11 @@ func formatHostResponse(h *database.Host) map[string]interface{} {
 		mapper = map[string]interface{}{}
 	}
 
-	squads := []string{}
-	if h.InternalSquads != "" && h.InternalSquads != "null" {
-		_ = json.Unmarshal([]byte(h.InternalSquads), &squads)
+	var squads []string
+	if err := db.Model(&database.InternalSquadHostLink{}).
+		Where("host_uuid = ?", h.UUID).
+		Order("squad_uuid ASC").Pluck("squad_uuid", &squads).Error; err != nil {
+		return nil, err
 	}
 	if squads == nil {
 		squads = []string{}
@@ -485,25 +482,25 @@ func formatHostResponse(h *database.Host) map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"uuid":                         h.UUID,
-		"viewPosition":                 viewPos,
-		"remark":                       h.Remark,
-		"address":                      h.Address,
-		"port":                         h.Port,
-		"path":                         nullableString(h.Path),
-		"sni":                          nullableString(h.Sni),
-		"host":                         nullableString(h.Host),
-		"alpn":                         nullableAlpn(h.Alpn),
-		"fingerprint":                  fp,
-		"isDisabled":                   h.IsDisabled,
-		"securityLayer":                secLayer,
-		"xhttpExtraParams":             xhttpExtra,
-		"muxParams":                    muxParams,
-		"sockoptParams":                sockoptParams,
-		"finalMask":                    finalMask,
+		"uuid":             h.UUID,
+		"viewPosition":     viewPos,
+		"remark":           h.Remark,
+		"address":          h.Address,
+		"port":             h.Port,
+		"path":             nullableString(h.Path),
+		"sni":              nullableString(h.Sni),
+		"host":             nullableString(h.Host),
+		"alpn":             nullableAlpn(h.Alpn),
+		"fingerprint":      fp,
+		"isDisabled":       h.IsDisabled,
+		"securityLayer":    secLayer,
+		"xhttpExtraParams": xhttpExtra,
+		"muxParams":        muxParams,
+		"sockoptParams":    sockoptParams,
+		"finalMask":        finalMask,
 		"inbound": map[string]interface{}{
-			"configProfileUuid":        nullableString(h.ConfigProfileUUID),
-			"configProfileInboundUuid": nullableString(h.ConfigProfileInboundUUID),
+			"configProfileUuid":        nullableStringPtr(h.ConfigProfileUUID),
+			"configProfileInboundUuid": nullableStringPtr(h.ConfigProfileInboundUUID),
 		},
 		"serverDescription":            nullableString(h.ServerDescription),
 		"tags":                         tags,
@@ -517,14 +514,14 @@ func formatHostResponse(h *database.Host) map[string]interface{} {
 		"mihomoX25519":                 h.MihomoX25519,
 		"mihomoIpVersion":              nullableMihomoIpVersion(h.MihomoIpVersion),
 		"nodes":                        nodes,
-		"xrayJsonTemplateUuid":         nullableString(h.XrayJsonTemplateUUID),
+		"xrayJsonTemplateUuid":         nullableStringPtr(h.XrayJsonTemplateUUID),
 		"excludeFromSubscriptionTypes": excludeTypes,
 		"mapper":                       mapper,
 		"internalSquads": map[string]interface{}{
 			"mode":   squadsMode,
 			"squads": squads,
 		},
-	}
+	}, nil
 }
 
 func (h *Handler) GetHosts(w http.ResponseWriter, r *http.Request) {
@@ -538,7 +535,12 @@ func (h *Handler) GetHosts(w http.ResponseWriter, r *http.Request) {
 
 	res := make([]map[string]interface{}, 0, len(hostsList))
 	for i := range hostsList {
-		res = append(res, formatHostResponse(&hostsList[i]))
+		formatted, err := formatHostResponse(h.service.DB(), &hostsList[i])
+		if err != nil {
+			http.Error(w, `{"message":"Failed to load host relations"}`, http.StatusInternalServerError)
+			return
+		}
+		res = append(res, formatted)
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": res,
@@ -560,9 +562,14 @@ func (h *Handler) CreateHost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	formatted, err := formatHostResponse(h.service.DB(), host)
+	if err != nil {
+		http.Error(w, `{"message":"Failed to load host relations"}`, http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": formatHostResponse(host),
+		"response": formatted,
 	})
 }
 
@@ -575,16 +582,19 @@ func (h *Handler) GetHost(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Host not found"})
 		return
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": formatHostResponse(host),
-	})
+	formatted, err := formatHostResponse(h.service.DB(), host)
+	if err != nil {
+		http.Error(w, `{"message":"Failed to load host relations"}`, http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"response": formatted})
 }
 
 func (h *Handler) UpdateHost(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	var input struct {
-		UUID                         string          `json:"uuid"`
-		Inbound                      *struct {
+		UUID    string `json:"uuid"`
+		Inbound *struct {
 			ConfigProfileUUID        string `json:"configProfileUuid"`
 			ConfigProfileInboundUUID string `json:"configProfileInboundUuid"`
 		} `json:"inbound"`
@@ -642,17 +652,17 @@ func (h *Handler) UpdateHost(w http.ResponseWriter, r *http.Request) {
 
 	if input.Inbound != nil {
 		if input.Inbound.ConfigProfileUUID != "" {
-			host.ConfigProfileUUID = input.Inbound.ConfigProfileUUID
+			host.ConfigProfileUUID = nullableString(input.Inbound.ConfigProfileUUID)
 		}
 		if input.Inbound.ConfigProfileInboundUUID != "" {
-			host.ConfigProfileInboundUUID = input.Inbound.ConfigProfileInboundUUID
+			host.ConfigProfileInboundUUID = nullableString(input.Inbound.ConfigProfileInboundUUID)
 		}
 	}
 	if input.ConfigProfileUUID != nil {
-		host.ConfigProfileUUID = *input.ConfigProfileUUID
+		host.ConfigProfileUUID = nullableStringPtr(input.ConfigProfileUUID)
 	}
 	if input.ConfigProfileInboundUUID != nil {
-		host.ConfigProfileInboundUUID = *input.ConfigProfileInboundUUID
+		host.ConfigProfileInboundUUID = nullableStringPtr(input.ConfigProfileInboundUUID)
 	}
 	if input.Remark != nil {
 		host.Remark = *input.Remark
@@ -700,8 +710,7 @@ func (h *Handler) UpdateHost(w http.ResponseWriter, r *http.Request) {
 		host.ServerDescription = *input.ServerDescription
 	}
 	if input.Tags != nil {
-		tb, _ := json.Marshal(*input.Tags)
-		host.Tags = string(tb)
+		host.Tags = database.StringArray(*input.Tags)
 	}
 	if input.IsHidden != nil {
 		host.IsHidden = *input.IsHidden
@@ -735,11 +744,10 @@ func (h *Handler) UpdateHost(w http.ResponseWriter, r *http.Request) {
 		host.Nodes = string(nb)
 	}
 	if input.XrayJsonTemplateUUID != nil {
-		host.XrayJsonTemplateUUID = *input.XrayJsonTemplateUUID
+		host.XrayJsonTemplateUUID = nullableStringPtr(input.XrayJsonTemplateUUID)
 	}
 	if input.ExcludeFromSubscriptionTypes != nil {
-		eb, _ := json.Marshal(*input.ExcludeFromSubscriptionTypes)
-		host.ExcludeFromSubscriptionTypes = string(eb)
+		host.ExcludeFromSubscriptionTypes = database.StringArray(*input.ExcludeFromSubscriptionTypes)
 	}
 	if len(input.Mapper) > 0 {
 		host.Mapper = string(input.Mapper)
@@ -751,16 +759,41 @@ func (h *Handler) UpdateHost(w http.ResponseWriter, r *http.Request) {
 		sb, _ := json.Marshal(input.InternalSquads.Squads)
 		host.InternalSquads = string(sb)
 	}
-	host.UpdatedAt = time.Now().UTC()
+	if err := h.service.DB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(host).Error; err != nil {
+			return err
+		}
+		if input.Nodes == nil && input.InternalSquads == nil {
+			return nil
+		}
 
-	if err := h.service.DB().Save(host).Error; err != nil {
+		nodeUUIDs := []string{}
+		if input.Nodes != nil {
+			nodeUUIDs = *input.Nodes
+		} else if err := tx.Model(&database.HostsToNode{}).Where("host_uuid = ?", host.UUID).Pluck("node_uuid", &nodeUUIDs).Error; err != nil {
+			return err
+		}
+
+		squadUUIDs := []string{}
+		if input.InternalSquads != nil {
+			squadUUIDs = input.InternalSquads.Squads
+		} else if err := tx.Model(&database.InternalSquadHostLink{}).Where("host_uuid = ?", host.UUID).Pluck("squad_uuid", &squadUUIDs).Error; err != nil {
+			return err
+		}
+		return replaceHostRelations(tx, host.UUID, nodeUUIDs, squadUUIDs)
+	}); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Failed to update host"})
 		return
 	}
 
+	formatted, err := formatHostResponse(h.service.DB(), host)
+	if err != nil {
+		http.Error(w, `{"message":"Failed to load host relations"}`, http.StatusInternalServerError)
+		return
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": formatHostResponse(host),
+		"response": formatted,
 	})
 }
 

@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
-	"strings"
 	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -52,8 +52,14 @@ func ensureGlobalSymlink() {
 }
 
 func main() {
-	ensureGlobalSymlink()
 	cfg := config.Load()
+	args := os.Args[1:]
+	if cli.IsPostgresToSQLiteMigrationCommand(args) {
+		cli.RunRescue(nil, cfg, args)
+		return
+	}
+
+	ensureGlobalSymlink()
 
 	db, err := database.Init(cfg.DBDriver, cfg.DatabaseURL)
 	if err != nil {

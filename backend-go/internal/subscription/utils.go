@@ -2,31 +2,42 @@ package subscription
 
 import (
 	"strings"
+
+	"remnawave-go/internal/database"
 )
 
-// ParseArray parses PostgreSQL text array format (e.g. "{MIHOMO,CLASH}"),
-// JSON array format (e.g. "[\"MIHOMO\",\"CLASH\"]"), or comma-separated lists into []string.
-func ParseArray(raw string) []string {
-	if raw == "" || raw == "{}" || raw == "[]" {
-		return nil
-	}
-	clean := strings.Trim(raw, "{}[]\" ")
-	if clean == "" {
-		return nil
-	}
-	parts := strings.Split(clean, ",")
-	var res []string
-	for _, p := range parts {
-		p = strings.Trim(strings.TrimSpace(p), "\"")
-		if p != "" {
-			res = append(res, p)
+// ParseArray accepts the model's cross-dialect array type and older serialized
+// array values found in existing SQLite databases.
+func ParseArray(raw interface{}) []string {
+	switch value := raw.(type) {
+	case database.StringArray:
+		return []string(value)
+	case []string:
+		return value
+	case string:
+		if value == "" {
+			return nil
 		}
+		var parsed database.StringArray
+		if err := parsed.Scan(value); err == nil && (strings.HasPrefix(value, "[") || strings.HasPrefix(value, "{") || !strings.Contains(value, ",")) {
+			return []string(parsed)
+		}
+		parts := strings.Split(strings.Trim(value, "{}[]\" "), ",")
+		result := make([]string, 0, len(parts))
+		for _, part := range parts {
+			part = strings.Trim(strings.TrimSpace(part), "\"")
+			if part != "" {
+				result = append(result, part)
+			}
+		}
+		return result
+	default:
+		return nil
 	}
-	return res
 }
 
 // IsExcluded checks whether a host is excluded from a given subscription type.
-func IsExcluded(excludeRaw string, subType string) bool {
+func IsExcluded(excludeRaw interface{}, subType string) bool {
 	for _, item := range ParseArray(excludeRaw) {
 		if strings.EqualFold(item, subType) {
 			return true

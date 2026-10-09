@@ -3,6 +3,7 @@ package nodes
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"math"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func NanoToMultiplier(v int64) float64 {
@@ -272,9 +274,9 @@ func (s *Service) PollNodeStats(node *database.Node) {
 	}
 
 	// 2. Fetch users stats (traffic delta)
+	now := time.Now().UTC()
 	usersTraffic, err := s.client.GetUsersStats(node, true)
 	if err == nil {
-		now := time.Now().UTC()
 		activeCount := 0
 
 		for _, ut := range usersTraffic {
@@ -297,7 +299,7 @@ func (s *Service) PollNodeStats(node *database.Node) {
 			}
 
 			// Update user_traffic in database (ut.Username is the user ID string)
-			s.db.Exec(`
+			if err := s.db.Exec(`
 				UPDATE user_traffic
 				SET
 					used_traffic_bytes = used_traffic_bytes + ?,
@@ -306,17 +308,24 @@ func (s *Service) PollNodeStats(node *database.Node) {
 					first_connected_at = COALESCE(first_connected_at, ?),
 					last_connected_node_uuid = ?
 				WHERE id = ?
-			`, incTraffic, incTraffic, now, now, node.UUID, uid)
+			`, incTraffic, incTraffic, now, now, node.UUID, uid).Error; err != nil {
+				log.Printf("[NODE STATS] update user traffic node=%s user=%d: %v", node.UUID, uid, err)
+			}
 
 			// Record user traffic on this node in nodes_user_usage_history
-			s.db.Exec(`
-				INSERT INTO nodes_user_usage_history (node_id, user_id, total_bytes, created_at, updated_at)
-				VALUES (?, ?, ?, CURRENT_DATE, NOW())
-				ON CONFLICT (node_id, created_at, user_id)
-				DO UPDATE SET
-					total_bytes = nodes_user_usage_history.total_bytes + EXCLUDED.total_bytes,
-					updated_at = EXCLUDED.updated_at
-			`, node.ID, uid, delta)
+			day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+			history := database.NodesUserUsageHistory{
+				NodeID: node.ID, UserID: uint64(uid), TotalBytes: uint64(delta), CreatedAt: day, UpdatedAt: now,
+			}
+			if err := s.db.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "node_id"}, {Name: "created_at"}, {Name: "user_id"}},
+				DoUpdates: clause.Assignments(map[string]interface{}{
+					"total_bytes": gorm.Expr("total_bytes + excluded.total_bytes"),
+					"updated_at":  gorm.Expr("excluded.updated_at"),
+				}),
+			}).Create(&history).Error; err != nil {
+				log.Printf("[NODE STATS] upsert user usage history node=%s user=%d: %v", node.UUID, uid, err)
+			}
 		}
 
 		if len(usersTraffic) > 0 {
@@ -353,16 +362,22 @@ func (s *Service) PollNodeStats(node *database.Node) {
 	nodeTotal := nodeDownlink + nodeUplink
 	if nodeTotal > 0 {
 		// Record hourly node usage
-		s.db.Exec(`
-			INSERT INTO nodes_usage_history (node_uuid, download_bytes, upload_bytes, total_bytes, created_at, updated_at)
-			VALUES (?, ?, ?, ?, date_trunc('hour', NOW()), NOW())
-			ON CONFLICT (node_uuid, created_at)
-			DO UPDATE SET
-				download_bytes = nodes_usage_history.download_bytes + EXCLUDED.download_bytes,
-				upload_bytes = nodes_usage_history.upload_bytes + EXCLUDED.upload_bytes,
-				total_bytes = nodes_usage_history.total_bytes + EXCLUDED.total_bytes,
-				updated_at = EXCLUDED.updated_at
-		`, node.UUID, nodeDownlink, nodeUplink, nodeTotal)
+		hour := now.Truncate(time.Hour)
+		history := database.NodesUsageHistory{
+			NodeUUID: node.UUID, DownloadBytes: uint64(nodeDownlink), UploadBytes: uint64(nodeUplink),
+			TotalBytes: uint64(nodeTotal), CreatedAt: hour, UpdatedAt: now,
+		}
+		if err := s.db.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "node_uuid"}, {Name: "created_at"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"download_bytes": gorm.Expr("download_bytes + excluded.download_bytes"),
+				"upload_bytes":   gorm.Expr("upload_bytes + excluded.upload_bytes"),
+				"total_bytes":    gorm.Expr("total_bytes + excluded.total_bytes"),
+				"updated_at":     gorm.Expr("excluded.updated_at"),
+			}),
+		}).Create(&history).Error; err != nil {
+			log.Printf("[NODE STATS] upsert node usage history node=%s: %v", node.UUID, err)
+		}
 
 		// Increment node lifetime traffic with consumption multiplier
 		mult := NanoToMultiplier(node.ConsumptionMultiplier)
@@ -370,7 +385,9 @@ func (s *Service) PollNodeStats(node *database.Node) {
 			mult = 1.0
 		}
 		incNodeTraffic := int64(float64(nodeTotal) * mult)
-		s.db.Exec(`UPDATE nodes SET traffic_used_bytes = traffic_used_bytes + ? WHERE uuid = ?`, incNodeTraffic, node.UUID)
+		if err := s.db.Exec(`UPDATE nodes SET traffic_used_bytes = traffic_used_bytes + ? WHERE uuid = ?`, incNodeTraffic, node.UUID).Error; err != nil {
+			log.Printf("[NODE STATS] update node traffic node=%s: %v", node.UUID, err)
+		}
 	}
 
 	// 4. If online users is still 0, check active IP sessions for accuracy
@@ -484,18 +501,21 @@ func (s *Service) Create(dto CreateNodeDTO) (*database.Node, error) {
 		UpdatedAt:                 time.Now().UTC(),
 	}
 
-	err := s.db.Create(node).Error
-	if err != nil {
-		return nil, err
+	var activeInbounds []string
+	if dto.ConfigProfile != nil {
+		activeInbounds = dto.ConfigProfile.ActiveInbounds
 	}
-
-	if dto.ConfigProfile != nil && len(dto.ConfigProfile.ActiveInbounds) > 0 {
-		for _, ib := range dto.ConfigProfile.ActiveInbounds {
-			s.db.Create(&database.ConfigProfileInboundsToNodes{
-				ConfigProfileInboundUUID: ib,
-				NodeUUID:                 node.UUID,
-			})
+	if err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(node).Error; err != nil {
+			return err
 		}
+		profileID := ""
+		if profileUuid != nil {
+			profileID = *profileUuid
+		}
+		return createNodeInboundLinks(tx, node.UUID, profileID, activeInbounds)
+	}); err != nil {
+		return nil, err
 	}
 
 	if s.client != nil {
@@ -527,6 +547,114 @@ func (s *Service) Update(uuid string, updates map[string]interface{}) (*database
 		return nil, err
 	}
 	return s.GetByUUID(uuid)
+}
+
+func (s *Service) UpdateWithConfigProfile(uuid string, updates map[string]interface{}, changeProfile bool, profileUUID *string, inboundUUIDs []string) (*database.Node, error) {
+	updates["updated_at"] = time.Now().UTC()
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := updateNodeWithProfile(tx, uuid, updates, changeProfile, profileUUID, inboundUUIDs); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetByUUID(uuid)
+}
+
+func (s *Service) BulkUpdateConfigProfile(nodeUUIDs []string, profileUUID *string, inboundUUIDs []string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		seen := make(map[string]struct{}, len(nodeUUIDs))
+		for _, nodeUUID := range nodeUUIDs {
+			if nodeUUID == "" {
+				continue
+			}
+			if _, exists := seen[nodeUUID]; exists {
+				continue
+			}
+			seen[nodeUUID] = struct{}{}
+			if err := updateNodeWithProfile(tx, nodeUUID, map[string]interface{}{}, true, profileUUID, inboundUUIDs); err != nil {
+				return fmt.Errorf("update node %s: %w", nodeUUID, err)
+			}
+		}
+		return nil
+	})
+}
+
+func updateNodeWithProfile(tx *gorm.DB, nodeUUID string, updates map[string]interface{}, changeProfile bool, profileUUID *string, inboundUUIDs []string) error {
+	var node database.Node
+	if err := tx.Where("uuid = ?", nodeUUID).First(&node).Error; err != nil {
+		return err
+	}
+	if changeProfile {
+		if profileUUID != nil && strings.TrimSpace(*profileUUID) != "" {
+			cleanProfileUUID := strings.TrimSpace(*profileUUID)
+			var profile database.ConfigProfile
+			if err := tx.Select("uuid").Where("uuid = ?", cleanProfileUUID).First(&profile).Error; err != nil {
+				return fmt.Errorf("config profile %s does not exist: %w", cleanProfileUUID, err)
+			}
+			updates["active_config_profile_uuid"] = cleanProfileUUID
+		} else {
+			updates["active_config_profile_uuid"] = nil
+		}
+	}
+	updates["updated_at"] = time.Now().UTC()
+	if err := tx.Model(&database.Node{}).Where("uuid = ?", nodeUUID).Updates(updates).Error; err != nil {
+		return err
+	}
+	if !changeProfile {
+		return nil
+	}
+	if err := tx.Where("node_uuid = ?", nodeUUID).Delete(&database.ConfigProfileInboundsToNodes{}).Error; err != nil {
+		return err
+	}
+	if profileUUID == nil || strings.TrimSpace(*profileUUID) == "" {
+		if len(inboundUUIDs) > 0 {
+			return fmt.Errorf("cannot attach inbounds without an active config profile")
+		}
+		return nil
+	}
+	return createNodeInboundLinks(tx, nodeUUID, strings.TrimSpace(*profileUUID), inboundUUIDs)
+}
+
+func createNodeInboundLinks(tx *gorm.DB, nodeUUID, profileID string, inboundUUIDs []string) error {
+	uniqueUUIDs := make([]string, 0, len(inboundUUIDs))
+	seen := make(map[string]struct{}, len(inboundUUIDs))
+	for _, inboundUUID := range inboundUUIDs {
+		if inboundUUID == "" {
+			continue
+		}
+		if _, exists := seen[inboundUUID]; exists {
+			continue
+		}
+		seen[inboundUUID] = struct{}{}
+		uniqueUUIDs = append(uniqueUUIDs, inboundUUID)
+	}
+	if len(uniqueUUIDs) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(profileID) == "" {
+		return fmt.Errorf("cannot attach inbounds without an active config profile")
+	}
+	var inbounds []database.ConfigProfileInbound
+	if err := tx.Select("uuid", "profile_uuid").Where("uuid IN ?", uniqueUUIDs).Find(&inbounds).Error; err != nil {
+		return err
+	}
+	if len(inbounds) != len(uniqueUUIDs) {
+		return fmt.Errorf("one or more inbounds do not exist")
+	}
+	links := make([]database.ConfigProfileInboundsToNodes, 0, len(uniqueUUIDs))
+	for _, inbound := range inbounds {
+		if inbound.ProfileUUID != profileID {
+			return fmt.Errorf("inbound %s does not belong to config profile %s", inbound.UUID, profileID)
+		}
+		links = append(links, database.ConfigProfileInboundsToNodes{
+			ConfigProfileInboundUUID: inbound.UUID,
+			NodeUUID:                 nodeUUID,
+		})
+	}
+	return tx.Create(&links).Error
 }
 
 func (s *Service) Delete(uuid string) error {

@@ -3,14 +3,20 @@ package system
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"compress/gzip"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"gorm.io/gorm"
 )
+
+var restoreIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]*$`)
 
 type BackupRestoreService struct {
 	db *gorm.DB
@@ -34,7 +40,6 @@ func (s *BackupRestoreService) RestoreFromTarGz(tarGzPath string) error {
 	defer gzr.Close()
 
 	tr := tar.NewReader(gzr)
-
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
@@ -43,7 +48,9 @@ func (s *BackupRestoreService) RestoreFromTarGz(tarGzPath string) error {
 		if err != nil {
 			return err
 		}
-
+		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			continue
+		}
 		if strings.HasSuffix(header.Name, ".sql.gz") {
 			return s.restoreSqlGz(tr)
 		}
@@ -59,63 +66,212 @@ func (s *BackupRestoreService) restoreSqlGz(r io.Reader) error {
 	}
 	defer gzr.Close()
 
-	scanner := bufio.NewScanner(gzr)
-	buf := make([]byte, 1024*1024)
-	scanner.Buffer(buf, 10*1024*1024)
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		return consumePostgresCopyDump(tx, gzr)
+	})
+}
+
+func consumePostgresCopyDump(tx *gorm.DB, r io.Reader) error {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 64*1024), 64*1024*1024)
 
 	var currentTable string
 	var columns []string
-
+	var skipCurrentTable bool
+	var rowNumber int64
+	var sawCopy bool
 	for scanner.Scan() {
 		line := scanner.Text()
-
-		if strings.HasPrefix(line, "COPY public.") {
-			parts := strings.Fields(line)
-			if len(parts) >= 3 {
-				tableWithPublic := parts[1]
-				currentTable = strings.TrimPrefix(tableWithPublic, "public.")
-				colPart := line[strings.Index(line, "(")+1 : strings.Index(line, ")")]
-				columns = strings.Split(colPart, ", ")
+		if strings.HasPrefix(line, "COPY ") {
+			if currentTable != "" {
+				return fmt.Errorf("table %s COPY block did not end before the next block", currentTable)
+			}
+			table, parsedColumns, err := parseCopyHeader(line)
+			if err != nil {
+				return err
+			}
+			currentTable = table
+			columns = parsedColumns
+			rowNumber = 0
+			sawCopy = true
+			skipCurrentTable = table == "_prisma_migrations" && !tx.Migrator().HasTable(table)
+			if !skipCurrentTable && !tx.Migrator().HasTable(table) {
+				return fmt.Errorf("backup contains table %q, which does not exist in the destination database", table)
 			}
 			continue
 		}
 
-		if currentTable != "" {
-			if line == "\\." {
-				currentTable = ""
-				columns = nil
+		if currentTable == "" {
+			continue
+		}
+		if line == `\.` {
+			currentTable = ""
+			columns = nil
+			skipCurrentTable = false
+			continue
+		}
+		if skipCurrentTable {
+			continue
+		}
+
+		encodedValues := strings.Split(line, "\t")
+		if len(encodedValues) != len(columns) {
+			return fmt.Errorf("table %s row %d has %d values for %d columns", currentTable, rowNumber+1, len(encodedValues), len(columns))
+		}
+		args := make([]interface{}, len(encodedValues))
+		for i, value := range encodedValues {
+			decoded, err := decodePostgresCopyField(value)
+			if err != nil {
+				return fmt.Errorf("decode table %s row %d column %s: %w", currentTable, rowNumber+1, columns[i], err)
+			}
+			if decoded == nil {
+				args[i] = nil
 				continue
 			}
-
-			values := strings.Split(line, "\t")
-			if len(values) == len(columns) {
-				s.insertRow(currentTable, columns, values)
+			if currentTable == "passkeys" && columns[i] == "public_key" {
+				if raw, ok := decoded.(string); ok && strings.HasPrefix(raw, `\x`) {
+					binary, err := hex.DecodeString(strings.TrimPrefix(raw, `\x`))
+					if err != nil {
+						return fmt.Errorf("decode passkeys public_key at row %d: %w", rowNumber+1, err)
+					}
+					decoded = binary
+				}
 			}
+			args[i] = decoded
 		}
-	}
 
-	return scanner.Err()
+		quotedColumns := make([]string, len(columns))
+		placeholders := make([]string, len(columns))
+		for i, column := range columns {
+			quotedColumns[i] = `"` + strings.ReplaceAll(column, `"`, `""`) + `"`
+			placeholders[i] = "?"
+		}
+		query := `INSERT INTO "` + currentTable + `" (` + strings.Join(quotedColumns, ",") + `) VALUES (` + strings.Join(placeholders, ",") + `)`
+		if err := tx.Exec(query, args...).Error; err != nil {
+			return fmt.Errorf("insert table %s row %d: %w", currentTable, rowNumber+1, err)
+		}
+		rowNumber++
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read PostgreSQL dump: %w", err)
+	}
+	if currentTable != "" {
+		return fmt.Errorf("table %s COPY block is missing its terminator", currentTable)
+	}
+	if !sawCopy {
+		return fmt.Errorf("backup SQL dump contains no COPY data blocks")
+	}
+	return nil
 }
 
-func (s *BackupRestoreService) insertRow(table string, columns []string, values []string) {
-	var cleanCols []string
-	var placeholders []string
-	var args []interface{}
-
-	for i, col := range columns {
-		cleanCols = append(cleanCols, fmt.Sprintf(`"%s"`, col))
-		placeholders = append(placeholders, "?")
-
-		val := values[i]
-		if val == "\\N" {
-			args = append(args, nil)
-		} else {
-			args = append(args, val)
-		}
+func parseCopyHeader(line string) (string, []string, error) {
+	open := strings.IndexByte(line, '(')
+	close := strings.LastIndexByte(line, ')')
+	if open < 0 || close <= open || !strings.HasSuffix(line, " FROM stdin;") {
+		return "", nil, fmt.Errorf("unsupported PostgreSQL COPY header: %s", line)
+	}
+	parts := strings.Fields(strings.TrimSpace(line[:open]))
+	if len(parts) != 2 {
+		return "", nil, fmt.Errorf("invalid PostgreSQL COPY table declaration: %s", line)
+	}
+	tableRef := strings.Split(parts[1], ".")
+	if len(tableRef) != 2 || unquoteCopyIdentifier(tableRef[0]) != "public" {
+		return "", nil, fmt.Errorf("unsupported PostgreSQL COPY schema: %s", parts[1])
+	}
+	table := unquoteCopyIdentifier(tableRef[1])
+	if !restoreIdentifierPattern.MatchString(table) {
+		return "", nil, fmt.Errorf("invalid PostgreSQL table identifier %q", table)
 	}
 
-	query := fmt.Sprintf(`INSERT INTO "%s" (%s) VALUES (%s)`,
-		table, strings.Join(cleanCols, ", "), strings.Join(placeholders, ", "))
+	columnParts := strings.Split(line[open+1:close], ",")
+	columns := make([]string, len(columnParts))
+	for i, part := range columnParts {
+		column := unquoteCopyIdentifier(strings.TrimSpace(part))
+		if !restoreIdentifierPattern.MatchString(column) {
+			return "", nil, fmt.Errorf("invalid PostgreSQL column identifier %q", column)
+		}
+		columns[i] = column
+	}
+	if len(columns) == 0 {
+		return "", nil, fmt.Errorf("COPY table %s has no columns", table)
+	}
+	return table, columns, nil
+}
 
-	s.db.Exec(query, args...)
+func unquoteCopyIdentifier(identifier string) string {
+	identifier = strings.TrimSpace(identifier)
+	if len(identifier) >= 2 && identifier[0] == '"' && identifier[len(identifier)-1] == '"' {
+		return strings.ReplaceAll(identifier[1:len(identifier)-1], `""`, `"`)
+	}
+	return identifier
+}
+
+func decodePostgresCopyField(value string) (interface{}, error) {
+	if value == `\N` {
+		return nil, nil
+	}
+
+	input := []byte(value)
+	var output bytes.Buffer
+	for i := 0; i < len(input); i++ {
+		if input[i] != '\\' {
+			output.WriteByte(input[i])
+			continue
+		}
+		i++
+		if i >= len(input) {
+			return nil, fmt.Errorf("trailing escape character")
+		}
+		switch input[i] {
+		case 'b':
+			output.WriteByte('\b')
+		case 'f':
+			output.WriteByte('\f')
+		case 'n':
+			output.WriteByte('\n')
+		case 'r':
+			output.WriteByte('\r')
+		case 't':
+			output.WriteByte('\t')
+		case 'v':
+			output.WriteByte('\v')
+		case '\\':
+			output.WriteByte('\\')
+		case '0', '1', '2', '3', '4', '5', '6', '7':
+			end := i + 1
+			for end < len(input) && end < i+3 && input[end] >= '0' && input[end] <= '7' {
+				end++
+			}
+			parsed, err := strconv.ParseUint(string(input[i:end]), 8, 8)
+			if err != nil {
+				return nil, fmt.Errorf("invalid octal escape: %w", err)
+			}
+			output.WriteByte(byte(parsed))
+			i = end - 1
+		case 'x':
+			end := i + 1
+			for end < len(input) && end < i+3 && isHexDigit(input[end]) {
+				end++
+			}
+			if end == i+1 {
+				output.WriteByte('x')
+				continue
+			}
+			parsed, err := strconv.ParseUint(string(input[i+1:end]), 16, 8)
+			if err != nil {
+				return nil, fmt.Errorf("invalid hexadecimal escape: %w", err)
+			}
+			output.WriteByte(byte(parsed))
+			i = end - 1
+		default:
+			// PostgreSQL treats a backslash before a non-special character as
+			// an escape for that character, which removes the backslash.
+			output.WriteByte(input[i])
+		}
+	}
+	return output.String(), nil
+}
+
+func isHexDigit(b byte) bool {
+	return b >= '0' && b <= '9' || b >= 'a' && b <= 'f' || b >= 'A' && b <= 'F'
 }

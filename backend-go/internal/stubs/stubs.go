@@ -13,9 +13,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
-	"github.com/golang-jwt/jwt/v5"
+	"gorm.io/gorm/clause"
 
 	"sync"
 
@@ -146,7 +147,6 @@ func (s *StubHandler) RegisterRoutes(r chi.Router) {
 	r.Delete("/api/snippets", s.DeleteSnippet)
 	r.Post("/api/snippets/actions/sync", s.SyncSnippets)
 
-
 	r.Get("/api/passkeys", s.GetPasskeys)
 	r.Patch("/api/passkeys", s.UpdatePasskey)
 	r.Delete("/api/passkeys", s.DeletePasskey)
@@ -203,10 +203,7 @@ func (s *StubHandler) RegisterRoutes(r chi.Router) {
 }
 
 func formatPlugin(p *database.NodePlugin) map[string]interface{} {
-	var tags []string
-	if p.Tags != "" {
-		_ = json.Unmarshal([]byte(p.Tags), &tags)
-	}
+	tags := []string(p.Tags)
 	if tags == nil {
 		tags = []string{}
 	}
@@ -270,7 +267,7 @@ func (s *StubHandler) CreateNodePlugin(w http.ResponseWriter, r *http.Request) {
 		UUID:         uuid.New().String(),
 		ViewPosition: int(count) + 1,
 		Name:         strings.TrimSpace(body.Name),
-		Tags:         "[]",
+		Tags:         database.StringArray{},
 		PluginConfig: string(cfgBytes),
 		CreatedAt:    now,
 		UpdatedAt:    now,
@@ -796,7 +793,7 @@ func (s *StubHandler) GetPasskeyRegOptions(w http.ResponseWriter, r *http.Reques
 		var ps map[string]interface{}
 		if err := json.Unmarshal([]byte(setting.PasskeySettings), &ps); err == nil {
 			if id, ok := ps["rpId"].(string); ok && id != "" {
-			rpId = id
+				rpId = id
 			}
 		}
 	}
@@ -842,8 +839,8 @@ func (s *StubHandler) GetPasskeyRegOptions(w http.ResponseWriter, r *http.Reques
 			{"type": "public-key", "alg": -7},
 			{"type": "public-key", "alg": -257},
 		},
-		"timeout": 60000,
-		"attestation": "none",
+		"timeout":            60000,
+		"attestation":        "none",
 		"excludeCredentials": exclude,
 		"authenticatorSelection": map[string]interface{}{
 			"residentKey":      "preferred",
@@ -1192,11 +1189,11 @@ func (s *StubHandler) GetHwidDevices(w http.ResponseWriter, r *http.Request) {
 				if f.ID == "userId" {
 					query = query.Where("user_id = ?", f.Value)
 				} else if f.ID == "platform" {
-					query = query.Where("platform ILIKE ?", fmt.Sprintf("%%%v%%", f.Value))
+					query = query.Where("LOWER(platform) LIKE LOWER(?)", fmt.Sprintf("%%%v%%", f.Value))
 				} else if f.ID == "hwid" {
-					query = query.Where("hwid ILIKE ?", fmt.Sprintf("%%%v%%", f.Value))
+					query = query.Where("LOWER(hwid) LIKE LOWER(?)", fmt.Sprintf("%%%v%%", f.Value))
 				} else if f.ID == "requestIp" {
-					query = query.Where("request_ip ILIKE ?", fmt.Sprintf("%%%v%%", f.Value))
+					query = query.Where("LOWER(request_ip) LIKE LOWER(?)", fmt.Sprintf("%%%v%%", f.Value))
 				}
 			}
 		}
@@ -1635,10 +1632,19 @@ func (s *StubHandler) DropConnections(w http.ResponseWriter, r *http.Request) {
 func (s *StubHandler) GetNodeMetadata(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	uuidParam := chi.URLParam(r, "uuid")
-	var meta database.EntityMeta
 	var res map[string]interface{}
-	if err := s.db.Where("entity_id = ? AND entity_type = 'node'", uuidParam).First(&meta).Error; err == nil {
-		_ = json.Unmarshal([]byte(meta.Metadata), &res)
+	var node database.Node
+	if err := s.db.Select("id").Where("uuid = ?", uuidParam).First(&node).Error; err == nil {
+		var meta database.NodeMeta
+		if err := s.db.Where("node_id = ?", node.ID).First(&meta).Error; err == nil {
+			_ = json.Unmarshal([]byte(meta.Metadata), &res)
+		}
+	}
+	if res == nil {
+		var legacy database.EntityMeta
+		if err := s.db.Where("entity_id = ? AND entity_type = 'node'", uuidParam).First(&legacy).Error; err == nil {
+			_ = json.Unmarshal([]byte(legacy.Metadata), &res)
+		}
 	}
 	if res == nil {
 		res = map[string]interface{}{}
@@ -1658,12 +1664,19 @@ func (s *StubHandler) UpsertNodeMetadata(w http.ResponseWriter, r *http.Request)
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	b, _ := json.Marshal(body.Metadata)
-	meta := database.EntityMeta{
-		EntityID:   uuidParam,
-		EntityType: "node",
-		Metadata:   string(b),
+	var node database.Node
+	if err := s.db.Select("id").Where("uuid = ?", uuidParam).First(&node).Error; err != nil {
+		http.Error(w, "node not found", http.StatusNotFound)
+		return
 	}
-	s.db.Save(&meta)
+	meta := database.NodeMeta{NodeID: node.ID, Metadata: string(b)}
+	if err := s.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "node_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"metadata"}),
+	}).Create(&meta).Error; err != nil {
+		http.Error(w, "failed to save node metadata", http.StatusInternalServerError)
+		return
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
 			"metadata": body.Metadata,
@@ -1674,10 +1687,18 @@ func (s *StubHandler) UpsertNodeMetadata(w http.ResponseWriter, r *http.Request)
 func (s *StubHandler) GetUserMetadata(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	userId := chi.URLParam(r, "userId")
-	var meta database.EntityMeta
 	var res map[string]interface{}
-	if err := s.db.Where("entity_id = ? AND entity_type = 'user'", userId).First(&meta).Error; err == nil {
-		_ = json.Unmarshal([]byte(meta.Metadata), &res)
+	if id, err := strconv.ParseUint(userId, 10, 64); err == nil {
+		var meta database.UserMeta
+		if err := s.db.Where("user_id = ?", id).First(&meta).Error; err == nil {
+			_ = json.Unmarshal([]byte(meta.Metadata), &res)
+		}
+	}
+	if res == nil {
+		var legacy database.EntityMeta
+		if err := s.db.Where("entity_id = ? AND entity_type = 'user'", userId).First(&legacy).Error; err == nil {
+			_ = json.Unmarshal([]byte(legacy.Metadata), &res)
+		}
 	}
 	if res == nil {
 		res = map[string]interface{}{}
@@ -1697,12 +1718,19 @@ func (s *StubHandler) UpsertUserMetadata(w http.ResponseWriter, r *http.Request)
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	b, _ := json.Marshal(body.Metadata)
-	meta := database.EntityMeta{
-		EntityID:   userId,
-		EntityType: "user",
-		Metadata:   string(b),
+	parsedID, err := strconv.ParseUint(userId, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid user id", http.StatusBadRequest)
+		return
 	}
-	s.db.Save(&meta)
+	meta := database.UserMeta{UserID: parsedID, Metadata: string(b)}
+	if err := s.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "user_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"metadata"}),
+	}).Create(&meta).Error; err != nil {
+		http.Error(w, "failed to save user metadata", http.StatusInternalServerError)
+		return
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
 			"metadata": body.Metadata,
@@ -1839,11 +1867,11 @@ func (s *StubHandler) GetSubHistory(w http.ResponseWriter, r *http.Request) {
 				if f.ID == "userId" {
 					query = query.Where("user_id = ?", f.Value)
 				} else if f.ID == "requestIp" {
-					query = query.Where("request_ip ILIKE ?", fmt.Sprintf("%%%v%%", f.Value))
+					query = query.Where("LOWER(request_ip) LIKE LOWER(?)", fmt.Sprintf("%%%v%%", f.Value))
 				} else if f.ID == "userAgent" {
-					query = query.Where("user_agent ILIKE ?", fmt.Sprintf("%%%v%%", f.Value))
+					query = query.Where("LOWER(user_agent) LIKE LOWER(?)", fmt.Sprintf("%%%v%%", f.Value))
 				} else if f.ID == "srrRuleName" {
-					query = query.Where("srr_rule_name ILIKE ?", fmt.Sprintf("%%%v%%", f.Value))
+					query = query.Where("LOWER(srr_rule_name) LIKE LOWER(?)", fmt.Sprintf("%%%v%%", f.Value))
 				} else if f.ID == "srrResponseType" {
 					query = query.Where("srr_response_type = ?", f.Value)
 				}
@@ -1897,40 +1925,69 @@ func (s *StubHandler) GetSubHistoryStats(w http.ResponseWriter, r *http.Request)
 		App   string `json:"app"`
 		Count int    `json:"count"`
 	}
-	var byParsedApp []AppStat
-	s.db.Raw(`
-SELECT 
-    CASE 
-        WHEN POSITION('/' IN user_agent) > 0 THEN SPLIT_PART(user_agent, '/', 1)
-        ELSE SPLIT_PART(user_agent, ' ', 1)
-    END AS app,
-    COUNT(id) AS count
-FROM user_subscription_request_history
-WHERE user_agent IS NOT NULL
-GROUP BY 1
-ORDER BY count DESC
-LIMIT 50;
-`).Scan(&byParsedApp)
-	if byParsedApp == nil {
-		byParsedApp = []AppStat{}
+	type userAgentCount struct {
+		UserAgent string `gorm:"column:user_agent"`
+		Count     int    `gorm:"column:count"`
+	}
+	var userAgents []userAgentCount
+	if err := s.db.Model(&database.UserSubscriptionRequestHistory{}).
+		Select("user_agent, COUNT(id) AS count").
+		Where("user_agent IS NOT NULL").
+		Group("user_agent").Scan(&userAgents).Error; err != nil {
+		http.Error(w, "failed to load subscription history statistics", http.StatusInternalServerError)
+		return
+	}
+	agentCounts := make(map[string]int)
+	for _, row := range userAgents {
+		app := row.UserAgent
+		if slash := strings.IndexByte(app, '/'); slash >= 0 {
+			app = app[:slash]
+		} else if space := strings.IndexByte(app, ' '); space >= 0 {
+			app = app[:space]
+		}
+		agentCounts[app] += row.Count
+	}
+	byParsedApp := make([]AppStat, 0, len(agentCounts))
+	for app, count := range agentCounts {
+		byParsedApp = append(byParsedApp, AppStat{App: app, Count: count})
+	}
+	sort.Slice(byParsedApp, func(i, j int) bool {
+		if byParsedApp[i].Count == byParsedApp[j].Count {
+			return byParsedApp[i].App < byParsedApp[j].App
+		}
+		return byParsedApp[i].Count > byParsedApp[j].Count
+	})
+	if len(byParsedApp) > 50 {
+		byParsedApp = byParsedApp[:50]
 	}
 
 	type HourlyStat struct {
 		DateTime     time.Time `json:"dateTime"`
 		RequestCount int       `json:"requestCount"`
 	}
-	var hourlyRequestStats []HourlyStat
-	s.db.Raw(`
-SELECT 
-    date_trunc('hour', request_at) AS date_time,
-    COUNT(id) AS request_count
-FROM user_subscription_request_history
-WHERE request_at >= NOW() - INTERVAL '48 hours'
-GROUP BY 1
-ORDER BY 1;
-`).Scan(&hourlyRequestStats)
-	if hourlyRequestStats == nil {
-		hourlyRequestStats = []HourlyStat{}
+	type hourlyRow struct {
+		DateTime string `gorm:"column:date_time"`
+		Count    int    `gorm:"column:request_count"`
+	}
+	dateExpression := "to_char(date_trunc('hour', request_at), 'YYYY-MM-DD HH24:MI:SS')"
+	if s.db.Dialector.Name() == "sqlite" {
+		dateExpression = "strftime('%Y-%m-%d %H:00:00', request_at)"
+	}
+	var hourlyRows []hourlyRow
+	if err := s.db.Model(&database.UserSubscriptionRequestHistory{}).
+		Select(dateExpression+" AS date_time, COUNT(id) AS request_count").
+		Where("request_at >= ?", time.Now().UTC().Add(-48*time.Hour)).
+		Group("date_time").Order("date_time ASC").Scan(&hourlyRows).Error; err != nil {
+		http.Error(w, "failed to load hourly subscription statistics", http.StatusInternalServerError)
+		return
+	}
+	hourlyRequestStats := make([]HourlyStat, 0, len(hourlyRows))
+	for _, row := range hourlyRows {
+		dateTime, err := time.ParseInLocation("2006-01-02 15:04:05", row.DateTime, time.UTC)
+		if err != nil {
+			continue
+		}
+		hourlyRequestStats = append(hourlyRequestStats, HourlyStat{DateTime: dateTime, RequestCount: row.Count})
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1986,6 +2043,7 @@ func (s *StubHandler) GetBandwidthStatsNodes(w http.ResponseWriter, r *http.Requ
 	}
 
 	startDate, endDate, categories := parseDateRange(startStr, endStr)
+	endExclusive := endDate.AddDate(0, 0, 1)
 
 	type DailyRow struct {
 		Date  string
@@ -1994,12 +2052,12 @@ func (s *StubHandler) GetBandwidthStatsNodes(w http.ResponseWriter, r *http.Requ
 	var dailyRows []DailyRow
 	s.db.Raw(`
 SELECT
-    DATE_TRUNC('day', created_at)::date::text AS date,
+    CAST(DATE(created_at) AS TEXT) AS date,
     COALESCE(SUM(total_bytes), 0) AS total
 FROM nodes_usage_history
-WHERE created_at >= ?::date AND created_at <= (?::date + INTERVAL '1 day' - INTERVAL '1 millisecond')
-GROUP BY DATE_TRUNC('day', created_at)::date
-`, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&dailyRows)
+WHERE created_at >= ? AND created_at < ?
+GROUP BY DATE(created_at)
+`, startDate, endExclusive).Scan(&dailyRows)
 
 	dateMap := make(map[string]int64)
 	for _, dr := range dailyRows {
@@ -2025,11 +2083,11 @@ SELECT
     COALESCE(SUM(nuh.total_bytes), 0) AS total
 FROM nodes n
 JOIN nodes_usage_history nuh ON nuh.node_uuid = n.uuid
-WHERE nuh.created_at >= ?::date AND nuh.created_at <= (?::date + INTERVAL '1 day' - INTERVAL '1 millisecond')
+WHERE nuh.created_at >= ? AND nuh.created_at < ?
 GROUP BY n.uuid, n.name, n.country_code
 ORDER BY total DESC
 LIMIT ?
-`, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), topNodesLimit).Scan(&topNodeRows)
+`, startDate, endExclusive, topNodesLimit).Scan(&topNodeRows)
 
 	type TopNodeItem struct {
 		UUID        string `json:"uuid"`
@@ -2065,14 +2123,14 @@ LIMIT ?
 		s.db.Raw(`
 SELECT
     nuh.node_uuid,
-    DATE_TRUNC('day', nuh.created_at)::date::text AS date,
+    CAST(DATE(nuh.created_at) AS TEXT) AS date,
     COALESCE(SUM(nuh.total_bytes), 0) AS total
 FROM nodes_usage_history nuh
 WHERE nuh.node_uuid IN (?)
-  AND nuh.created_at >= ?::date
-  AND nuh.created_at <= (?::date + INTERVAL '1 day' - INTERVAL '1 millisecond')
-GROUP BY nuh.node_uuid, DATE_TRUNC('day', nuh.created_at)::date
-`, nodeUuids, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&nodeDailyRows)
+  AND nuh.created_at >= ?
+  AND nuh.created_at < ?
+GROUP BY nuh.node_uuid, DATE(nuh.created_at)
+`, nodeUuids, startDate, endExclusive).Scan(&nodeDailyRows)
 
 		nodeDateMap := make(map[string]map[string]int64)
 		for _, ndr := range nodeDailyRows {
@@ -2140,6 +2198,7 @@ func (s *StubHandler) GetBandwidthStatsUsers(w http.ResponseWriter, r *http.Requ
 	}
 
 	startDate, endDate, categories := parseDateRange(startStr, endStr)
+	endExclusive := endDate.AddDate(0, 0, 1)
 
 	type DailyRow struct {
 		Date  string
@@ -2148,14 +2207,14 @@ func (s *StubHandler) GetBandwidthStatsUsers(w http.ResponseWriter, r *http.Requ
 	var dailyRows []DailyRow
 	s.db.Raw(`
 SELECT
-    created_at::text AS date,
+    CAST(DATE(created_at) AS TEXT) AS date,
     COALESCE(SUM(total_bytes), 0) AS total
 FROM nodes_user_usage_history
 WHERE user_id = ?
-  AND created_at >= ?::date
-  AND created_at <= ?::date
+  AND created_at >= ?
+  AND created_at < ?
 GROUP BY created_at
-`, userId, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&dailyRows)
+`, userId, startDate.Format("2006-01-02"), endExclusive.Format("2006-01-02")).Scan(&dailyRows)
 
 	dateMap := make(map[string]int64)
 	for _, dr := range dailyRows {
@@ -2184,12 +2243,12 @@ SELECT
 FROM nodes n
 JOIN nodes_user_usage_history nuh ON nuh.node_id = n.id
 WHERE nuh.user_id = ?
-  AND nuh.created_at >= ?::date
-  AND nuh.created_at <= ?::date
+  AND nuh.created_at >= ?
+  AND nuh.created_at < ?
 GROUP BY n.id, n.uuid, n.name, n.country_code
 ORDER BY total DESC
 LIMIT ?
-`, userId, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), topNodesLimit).Scan(&topNodeRows)
+`, userId, startDate.Format("2006-01-02"), endExclusive.Format("2006-01-02"), topNodesLimit).Scan(&topNodeRows)
 
 	type TopNodeItem struct {
 		UUID        string `json:"uuid"`
@@ -2225,15 +2284,15 @@ LIMIT ?
 		s.db.Raw(`
 SELECT
     node_id,
-    created_at::text AS date,
+    CAST(DATE(created_at) AS TEXT) AS date,
     COALESCE(SUM(total_bytes), 0) AS total
 FROM nodes_user_usage_history
 WHERE user_id = ?
   AND node_id IN (?)
-  AND created_at >= ?::date
-  AND created_at <= ?::date
+  AND created_at >= ?
+  AND created_at < ?
 GROUP BY node_id, created_at
-`, userId, nodeIds, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&nodeDailyRows)
+`, userId, nodeIds, startDate.Format("2006-01-02"), endExclusive.Format("2006-01-02")).Scan(&nodeDailyRows)
 
 		nodeDateMap := make(map[uint64]map[string]int64)
 		for _, ndr := range nodeDailyRows {
@@ -2292,6 +2351,7 @@ func (s *StubHandler) GetBandwidthStatsNodeUsers(w http.ResponseWriter, r *http.
 	}
 
 	startDate, endDate, categories := parseDateRange(startStr, endStr)
+	endExclusive := endDate.AddDate(0, 0, 1)
 
 	var nodeUuids []string
 	if uuidParam := chi.URLParam(r, "uuid"); uuidParam != "" {
@@ -2331,14 +2391,14 @@ func (s *StubHandler) GetBandwidthStatsNodeUsers(w http.ResponseWriter, r *http.
 		var dailyRows []DailyRow
 		s.db.Raw(`
 SELECT
-    nuh.created_at::text AS date,
+    CAST(DATE(nuh.created_at) AS TEXT) AS date,
     COALESCE(SUM(nuh.total_bytes), 0) AS total
 FROM nodes_user_usage_history nuh
 WHERE nuh.node_id IN (?)
-  AND nuh.created_at >= ?::date
-  AND nuh.created_at <= ?::date
+  AND nuh.created_at >= ?
+  AND nuh.created_at < ?
 GROUP BY nuh.created_at
-`, nodeIds, startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).Scan(&dailyRows)
+`, nodeIds, startDate.Format("2006-01-02"), endExclusive.Format("2006-01-02")).Scan(&dailyRows)
 
 		dateMap := make(map[string]int64)
 		for _, dr := range dailyRows {
@@ -2362,12 +2422,12 @@ SELECT
 FROM users u
 JOIN nodes_user_usage_history nuh ON nuh.user_id = u.id
 WHERE nuh.node_id IN (?)
-  AND nuh.created_at >= ?::date
-  AND nuh.created_at <= ?::date
+  AND nuh.created_at >= ?
+  AND nuh.created_at < ?
 GROUP BY u.id, u.username
 ORDER BY total DESC
 LIMIT ?
-`, nodeIds, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"), topUsersLimit).Scan(&topUserRows)
+`, nodeIds, startDate.Format("2006-01-02"), endExclusive.Format("2006-01-02"), topUsersLimit).Scan(&topUserRows)
 
 		for _, tu := range topUserRows {
 			topUsers = append(topUsers, TopUserItem{
@@ -2395,6 +2455,7 @@ func (s *StubHandler) GetBandwidthNodesUsage(w http.ResponseWriter, r *http.Requ
 	minBytes, _ := strconv.ParseInt(r.URL.Query().Get("minTotalBytes"), 10, 64)
 
 	startDate, endDate, _ := parseDateRange(startStr, endStr)
+	endExclusive := endDate.AddDate(0, 0, 1)
 
 	var body struct {
 		NodesUuids []string `json:"nodesUuids"`
@@ -2411,7 +2472,7 @@ func (s *StubHandler) GetBandwidthNodesUsage(w http.ResponseWriter, r *http.Requ
 	query := s.db.Table("nodes_user_usage_history as nuh").
 		Select("n.uuid as node_uuid, nuh.user_id, COALESCE(SUM(nuh.total_bytes), 0) as total_bytes").
 		Joins("JOIN nodes n ON n.id = nuh.node_id").
-		Where("nuh.created_at >= ?::date AND nuh.created_at <= ?::date", startDate.Format("2006-01-02"), endDate.Format("2006-01-02")).
+		Where("nuh.created_at >= ? AND nuh.created_at < ?", startDate.Format("2006-01-02"), endExclusive.Format("2006-01-02")).
 		Group("n.uuid, nuh.user_id")
 
 	if len(body.NodesUuids) > 0 {
@@ -2437,7 +2498,7 @@ func (s *StubHandler) GetBandwidthNodesUsage(w http.ResponseWriter, r *http.Requ
 		item, ok := nodeMap[r.NodeUUID]
 		if !ok {
 			item = &NodeUsageItem{UUID: r.NodeUUID, Users: []UserUsageItem{}}
-		nodeMap[r.NodeUUID] = item
+			nodeMap[r.NodeUUID] = item
 		}
 		item.Users = append(item.Users, UserUsageItem{ID: r.UserID, TotalBytes: r.TotalBytes})
 	}
