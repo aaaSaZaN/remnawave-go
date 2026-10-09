@@ -48,11 +48,14 @@ func main() {
 	}
 
 	if len(os.Args) > 1 {
-		for _, arg := range os.Args[1:] {
-			if arg == "--rescue" || arg == "rescue" || arg == "cli" || arg == "--cli" {
-				cli.RunRescue(db, cfg, os.Args[2:])
-				return
-			}
+		firstArg := os.Args[1]
+		if firstArg == "--rescue" || firstArg == "rescue" || firstArg == "cli" || firstArg == "--cli" {
+			cli.RunRescue(db, cfg, os.Args[2:])
+			return
+		}
+		if firstArg == "import" || firstArg == "--import" || firstArg == "--import-pasarguard" || firstArg == "import-pasarguard" {
+			cli.RunRescue(db, cfg, os.Args[1:])
+			return
 		}
 	}
 
