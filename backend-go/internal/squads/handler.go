@@ -1,7 +1,9 @@
 package squads
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -664,6 +666,19 @@ func (h *Handler) CreateExternalSquad(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateExternalSquad(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
+	requestBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Invalid body"})
+		return
+	}
+	var rawFields map[string]json.RawMessage
+	if err := json.Unmarshal(requestBody, &rawFields); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Invalid body"})
+		return
+	}
+
 	var body struct {
 		UUID      string  `json:"uuid"`
 		Name      *string `json:"name"`
@@ -671,15 +686,9 @@ func (h *Handler) UpdateExternalSquad(w http.ResponseWriter, r *http.Request) {
 			TemplateUUID string `json:"templateUuid"`
 			TemplateType string `json:"templateType"`
 		} `json:"templates"`
-		SubscriptionSettings  interface{} `json:"subscriptionSettings"`
-		HostOverrides         interface{} `json:"hostOverrides"`
-		ResponseHeadersAdd    interface{} `json:"responseHeadersAdd"`
-		ResponseHeadersRemove []string    `json:"responseHeadersRemove"`
-		HwidSettings          interface{} `json:"hwidSettings"`
-		CustomRemarks         interface{} `json:"customRemarks"`
-		SubpageConfigUUID     *string     `json:"subpageConfigUuid"`
+		SubpageConfigUUID *string `json:"subpageConfigUuid"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.Unmarshal(requestBody, &body); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Invalid body"})
 		return
@@ -692,51 +701,84 @@ func (h *Handler) UpdateExternalSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	updates := map[string]interface{}{"updated_at": time.Now().UTC()}
 	if body.Name != nil {
-		s.Name = strings.TrimSpace(*body.Name)
+		updates["name"] = strings.TrimSpace(*body.Name)
 	}
-	if body.Templates != nil {
-		h.db.Where("external_squad_uuid = ?", s.UUID).Delete(&database.ExternalSquadTemplate{})
-		for _, tmpl := range *body.Templates {
-			h.db.Create(&database.ExternalSquadTemplate{
-				ExternalSquadUUID: s.UUID,
-				TemplateType:      tmpl.TemplateType,
-				TemplateUUID:      tmpl.TemplateUUID,
-			})
+	for field, column := range map[string]string{
+		"subscriptionSettings": "subscription_settings",
+		"hostOverrides":        "host_overrides",
+		"responseHeadersAdd":   "response_headers_add",
+		"hwidSettings":         "hwid_settings",
+		"customRemarks":        "custom_remarks",
+	} {
+		rawValue, present := rawFields[field]
+		if !present {
+			continue
+		}
+		if bytes.Equal(bytes.TrimSpace(rawValue), []byte("null")) {
+			updates[column] = nil
+			continue
+		}
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, rawValue); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"message": "Invalid body"})
+			return
+		}
+		if h.db.Dialector.Name() == "postgres" {
+			updates[column] = gorm.Expr("?::jsonb", compact.String())
+		} else {
+			updates[column] = compact.String()
 		}
 	}
-	if body.SubscriptionSettings != nil {
-		b, _ := json.Marshal(body.SubscriptionSettings)
-		s.SubscriptionSettings = string(b)
+	if rawValue, present := rawFields["responseHeadersRemove"]; present {
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, rawValue); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"message": "Invalid body"})
+			return
+		}
+		if h.db.Dialector.Name() == "postgres" {
+			updates["response_headers_remove"] = gorm.Expr("ARRAY(SELECT jsonb_array_elements_text(?::jsonb))", compact.String())
+		} else {
+			updates["response_headers_remove"] = compact.String()
+		}
 	}
-	if body.HostOverrides != nil {
-		b, _ := json.Marshal(body.HostOverrides)
-		s.HostOverrides = string(b)
+	if rawValue, present := rawFields["subpageConfigUuid"]; present {
+		if bytes.Equal(bytes.TrimSpace(rawValue), []byte("null")) {
+			updates["subpage_config_uuid"] = nil
+		} else if body.SubpageConfigUUID != nil {
+			updates["subpage_config_uuid"] = *body.SubpageConfigUUID
+		}
 	}
-	if body.ResponseHeadersAdd != nil {
-		b, _ := json.Marshal(body.ResponseHeadersAdd)
-		s.ResponseHeadersAdd = string(b)
-	}
-	if body.ResponseHeadersRemove != nil {
-		b, _ := json.Marshal(body.ResponseHeadersRemove)
-		s.ResponseHeadersRemove = string(b)
-	}
-	if body.HwidSettings != nil {
-		b, _ := json.Marshal(body.HwidSettings)
-		s.HwidSettings = string(b)
-	}
-	if body.CustomRemarks != nil {
-		b, _ := json.Marshal(body.CustomRemarks)
-		s.CustomRemarks = string(b)
-	}
-	if body.SubpageConfigUUID != nil {
-		s.SubpageConfigUUID = body.SubpageConfigUUID
-	}
-	s.UpdatedAt = time.Now().UTC()
 
-	if err := h.db.Save(&s).Error; err != nil {
+	err = h.db.Transaction(func(tx *gorm.DB) error {
+		if body.Templates != nil {
+			if err := tx.Where("external_squad_uuid = ?", s.UUID).Delete(&database.ExternalSquadTemplate{}).Error; err != nil {
+				return err
+			}
+			for _, tmpl := range *body.Templates {
+				if err := tx.Create(&database.ExternalSquadTemplate{
+					ExternalSquadUUID: s.UUID,
+					TemplateType:      tmpl.TemplateType,
+					TemplateUUID:      tmpl.TemplateUUID,
+				}).Error; err != nil {
+					return err
+				}
+			}
+		}
+		return tx.Model(&database.ExternalSquad{}).Where("uuid = ?", s.UUID).Updates(updates).Error
+	})
+	if err != nil {
+		log.Printf("[SQUADS] failed to update external squad uuid=%s: %v", s.UUID, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Failed to update squad"})
+		return
+	}
+	if err := h.db.Where("uuid = ?", s.UUID).First(&s).Error; err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Failed to load updated squad"})
 		return
 	}
 
