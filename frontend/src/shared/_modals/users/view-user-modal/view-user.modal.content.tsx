@@ -156,9 +156,7 @@ export const ViewUserModalContent = (props: IProps) => {
                     : undefined,
                 // @ts-expect-error - TODO: fix ZOD schema
                 expireAt: touchedFields.expireAt ? dayjs(values.expireAt).toISOString() : undefined,
-                activeInternalSquads: touchedFields.activeInternalSquads
-                    ? values.activeInternalSquads
-                    : undefined,
+                activeInternalSquads: values.activeInternalSquads,
                 description: touchedFields.description ? values.description : undefined,
                 // @ts-expect-error - TODO: fix ZOD schema
                 telegramId: values.telegramId === '' ? null : values.telegramId,
@@ -167,9 +165,7 @@ export const ViewUserModalContent = (props: IProps) => {
                 hwidDeviceLimit: values.hwidDeviceLimit === '' ? null : values.hwidDeviceLimit,
                 // eslint-disable-next-line no-nested-ternary
                 tag: touchedFields.tag ? (values.tag === '' ? null : values.tag) : undefined,
-                externalSquadUuid: touchedFields.externalSquadUuid
-                    ? values.externalSquadUuid
-                    : undefined
+                externalSquadUuid: values.externalSquadUuid ?? null
             }
         })
     })
