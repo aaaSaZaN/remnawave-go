@@ -356,7 +356,8 @@ func buildMihomoProxyNode(user *database.User, hm XrayHostMeta) map[string]inter
 				"short-id":   shortID,
 			}
 
-			if network == "tcp" {
+			flow := ResolveVlessFlow(rawInbMap, network, security)
+			if flow == "xtls-rprx-vision" {
 				node["flow"] = "xtls-rprx-vision"
 			}
 		} else if security == "tls" {

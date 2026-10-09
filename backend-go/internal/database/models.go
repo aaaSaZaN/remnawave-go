@@ -286,13 +286,13 @@ func (RemnawaveSetting) TableName() string {
 }
 
 type ApiToken struct {
-	UUID      string    `gorm:"primaryKey;type:varchar(64)" json:"uuid"`
-	Name      string    `gorm:"type:varchar(64)" json:"name"`
-	ExpireAt  time.Time `json:"expireAt"`
-	Token     string    `gorm:"type:text" json:"token"`
-	Scopes    string    `gorm:"type:text;default:'[]'" json:"scopes"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	UUID      string      `gorm:"primaryKey;type:varchar(64)" json:"uuid"`
+	Name      string      `gorm:"type:text" json:"name"`
+	ExpireAt  time.Time   `gorm:"column:expire_at" json:"expireAt"`
+	Token     string      `gorm:"-" json:"token"`
+	Scopes    StringArray `gorm:"type:text[];default:'{}'" json:"scopes"`
+	CreatedAt time.Time   `gorm:"column:created_at" json:"createdAt"`
+	UpdatedAt time.Time   `gorm:"column:updated_at" json:"updatedAt"`
 }
 
 func (ApiToken) TableName() string {
@@ -467,8 +467,8 @@ func (InfraBillingHistory) TableName() string {
 }
 
 type HwidDevice struct {
-	HWID        string    `gorm:"primaryKey;type:varchar(128)" json:"hwid"`
-	UserID      uint64    `gorm:"index" json:"userId"`
+	HWID        string    `gorm:"primaryKey;column:hwid;type:varchar(128)" json:"hwid"`
+	UserID      uint64    `gorm:"primaryKey;index" json:"userId"`
 	Platform    *string   `gorm:"type:varchar(64)" json:"platform"`
 	OSVersion   *string   `gorm:"type:varchar(64)" json:"osVersion"`
 	DeviceModel *string   `gorm:"type:varchar(128)" json:"deviceModel"`

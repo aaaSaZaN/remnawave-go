@@ -34,3 +34,25 @@ func IsExcluded(excludeRaw string, subType string) bool {
 	}
 	return false
 }
+
+// ResolveVlessFlow determines the flow for a VLESS outbound.
+// If the inbound settings explicitly set flow (even to "" or "none"), that explicit value is respected.
+// Only if flow is omitted from settings does it default to "xtls-rprx-vision" for tcp/raw + reality/tls.
+func ResolveVlessFlow(rawInbMap map[string]interface{}, network, security string) string {
+	if rawInbMap != nil {
+		if settings, ok := rawInbMap["settings"].(map[string]interface{}); ok {
+			if fVal, exists := settings["flow"]; exists {
+				if fStr, ok := fVal.(string); ok {
+					if fStr == "xtls-rprx-vision" {
+						return "xtls-rprx-vision"
+					}
+					return ""
+				}
+			}
+		}
+	}
+	if (network == "tcp" || network == "raw") && (security == "reality" || security == "tls") {
+		return "xtls-rprx-vision"
+	}
+	return ""
+}

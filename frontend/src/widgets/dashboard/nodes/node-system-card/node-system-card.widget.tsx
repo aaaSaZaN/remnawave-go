@@ -262,10 +262,25 @@ export const NodeSystemCardWidget = memo((props: IProps) => {
                                     <Text className={classes.statLabel} component="div">
                                         <Group gap={4}>
                                             <PiLinuxLogoDuotone size={12} />
+                                            OS
+                                        </Group>
+                                    </Text>
+                                    <Tooltip label={[info.platform, info.version].filter(Boolean).join(" ") || info.type}>
+                                        <Text className={classes.statValue}>
+                                            {[info.platform, info.version].filter(Boolean).join(" ") || info.type}
+                                        </Text>
+                                    </Tooltip>
+                                </Stack>
+                                <Stack gap={0} style={{ minWidth: 0 }}>
+                                    <Text className={classes.statLabel} component="div">
+                                        <Group gap={4}>
+                                            <PiLinuxLogoDuotone size={12} />
                                             {t('node-system-card.widget.kernel')}
                                         </Group>
                                     </Text>
-                                    <Text className={classes.statValue}>{info.release}</Text>
+                                    <Tooltip label={info.release}>
+                                        <Text className={classes.statValue}>{info.release}</Text>
+                                    </Tooltip>
                                 </Stack>
                                 {info.networkInterfaces.length > 0 && (
                                     <Stack gap={0} style={{ minWidth: 0 }}>

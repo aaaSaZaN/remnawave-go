@@ -33,7 +33,26 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 )
 
+func ensureGlobalSymlink() {
+	if os.Geteuid() != 0 {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	exe, _ = filepath.EvalSymlinks(exe)
+	symlinkPath := "/usr/local/bin/gowave"
+	target, err := os.Readlink(symlinkPath)
+	if err == nil && target == exe {
+		return
+	}
+	_ = os.Remove(symlinkPath)
+	_ = os.Symlink(exe, symlinkPath)
+}
+
 func main() {
+	ensureGlobalSymlink()
 	cfg := config.Load()
 
 	db, err := database.Init(cfg.DBDriver, cfg.DatabaseURL)
@@ -48,11 +67,14 @@ func main() {
 	}
 
 	if len(os.Args) > 1 {
-		for _, arg := range os.Args[1:] {
-			if arg == "--rescue" || arg == "rescue" || arg == "cli" || arg == "--cli" {
-				cli.RunRescue(db, cfg, os.Args[2:])
-				return
-			}
+		firstArg := os.Args[1]
+		if firstArg == "--rescue" || firstArg == "rescue" || firstArg == "cli" || firstArg == "--cli" {
+			cli.RunRescue(db, cfg, os.Args[2:])
+			return
+		}
+		if firstArg == "import" || firstArg == "--import" || firstArg == "--import-pasarguard" || firstArg == "import-pasarguard" || firstArg == "migrate" || firstArg == "--migrate" || firstArg == "--migrate-pg-to-sqlite" {
+			cli.RunRescue(db, cfg, os.Args[1:])
+			return
 		}
 	}
 

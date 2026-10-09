@@ -370,10 +370,7 @@ func buildOutbound(user *database.User, hm XrayHostMeta, tag string) map[string]
 	}
 
 	// 2. VLESS / Other Protocols
-	flow := ""
-	if (network == "tcp" || network == "raw") && (security == "reality" || security == "tls") {
-		flow = "xtls-rprx-vision"
-	}
+	flow := ResolveVlessFlow(rawInbMap, network, security)
 
 	// Derive client VLESS encryption from server inbound settings.decryption if present
 	encryption := "none"
@@ -387,17 +384,21 @@ func buildOutbound(user *database.User, hm XrayHostMeta, tag string) map[string]
 		}
 	}
 
+	userObj := map[string]interface{}{
+		"id":         user.VlessUUID,
+		"encryption": encryption,
+	}
+	if flow != "" && flow != "none" {
+		userObj["flow"] = flow
+	}
+
 	settings := map[string]interface{}{
 		"vnext": []interface{}{
 			map[string]interface{}{
 				"address": h.Address,
 				"port":    h.Port,
 				"users": []interface{}{
-					map[string]interface{}{
-						"id":         user.VlessUUID,
-						"encryption": encryption,
-						"flow":       flow,
-					},
+					userObj,
 				},
 			},
 		},

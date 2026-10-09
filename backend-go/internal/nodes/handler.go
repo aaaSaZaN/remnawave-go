@@ -139,22 +139,67 @@ func formatNodeResponse(service *Service, n *database.Node) map[string]interface
 		}
 		if metrics.System != nil && metrics.System.System != nil && metrics.System.System.Stats != nil {
 			st := metrics.System.System.Stats
+			info := metrics.System.System.Info
+
 			memTotal := uint64(0)
-			if st.MemoryFree > 0 || st.MemoryUsed > 0 {
+			if info != nil && info.MemoryTotal > 0 {
+				memTotal = info.MemoryTotal
+			} else if st.MemoryFree > 0 || st.MemoryUsed > 0 {
 				memTotal = st.MemoryFree + st.MemoryUsed
 			}
+
+			arch := "x64"
+			cpus := 2
+			cpuModel := "CPU"
+			hostname := n.Name
+			platform := "linux"
+			release := "linux"
+			hType := "Linux"
+			version := "1.0"
+			ifaces := []string{"eth0"}
+
+			if info != nil {
+				if info.Arch != "" {
+					arch = info.Arch
+				}
+				if info.CPUs > 0 {
+					cpus = info.CPUs
+				}
+				if info.CPUModel != "" {
+					cpuModel = info.CPUModel
+				}
+				if info.Hostname != "" {
+					hostname = info.Hostname
+				}
+				if info.Platform != "" {
+					platform = info.Platform
+				}
+				if info.Release != "" {
+					release = info.Release
+				}
+				if info.Type != "" {
+					hType = info.Type
+				}
+				if info.Version != "" {
+					version = info.Version
+				}
+				if len(info.NetworkInterfaces) > 0 {
+					ifaces = info.NetworkInterfaces
+				}
+			}
+
 			systemObj = map[string]interface{}{
 				"info": map[string]interface{}{
-					"arch":              "x64",
-					"cpus":              2,
-					"cpuModel":          "CPU",
+					"arch":              arch,
+					"cpus":              cpus,
+					"cpuModel":          cpuModel,
 					"memoryTotal":       memTotal,
-					"hostname":          n.Name,
-					"platform":          "linux",
-					"release":           "linux",
-					"type":              "Linux",
-					"version":           "1.0",
-					"networkInterfaces": []string{"eth0"},
+					"hostname":          hostname,
+					"platform":          platform,
+					"release":           release,
+					"type":              hType,
+					"version":           version,
+					"networkInterfaces": ifaces,
 				},
 				"stats": map[string]interface{}{
 					"memoryFree": st.MemoryFree,
@@ -484,6 +529,30 @@ func (h *Handler) RestartAllNodes(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ReorderNodes(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
+	var body struct {
+		Nodes []struct {
+			UUID         string `json:"uuid"`
+			ViewPosition int    `json:"viewPosition"`
+		} `json:"nodes"`
+		Items []struct {
+			UUID         string `json:"uuid"`
+			ViewPosition int    `json:"viewPosition"`
+		} `json:"items"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	items := body.Nodes
+	if len(items) == 0 {
+		items = body.Items
+	}
+
+	for _, item := range items {
+		if item.UUID != "" {
+			h.service.DB().Model(&database.Node{}).Where("uuid = ?", item.UUID).Update("view_position", item.ViewPosition)
+		}
+	}
+
 	h.GetNodes(w, r)
 }
 

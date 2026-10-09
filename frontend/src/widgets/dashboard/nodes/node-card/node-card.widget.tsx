@@ -37,7 +37,8 @@ const getNodeColors = (node: IProps['node']) => {
             boxShadow: 'rgba(107, 114, 128, 0.2)'
         }
     }
-    if (node.isConnected) {
+    const isWorking = node.isConnected && (!node.lastStatusMessage || node.lastStatusMessage === 'OK') && (node.xrayUptime ?? 1) > 0
+    if (isWorking) {
         return {
             backgroundColor: 'rgba(45, 212, 191, 0.15)',
             borderColor: 'rgba(45, 212, 191, 0.3)',
@@ -250,6 +251,11 @@ export const NodeCardWidget = memo((props: IProps) => {
                                     <Text className={classes.nodeName} fw={600} size="md">
                                         {node.name}
                                     </Text>
+                                    {node.lastStatusMessage && node.lastStatusMessage !== "OK" && (
+                                        <Badge color="red" variant="light" size="sm">
+                                            {node.lastStatusMessage}
+                                        </Badge>
+                                    )}
                                 </Flex>
 
                                 <Flex align="center" gap="xs">
@@ -478,8 +484,33 @@ export const NodeCardWidget = memo((props: IProps) => {
                             )}
 
                             <Flex align="center" gap={4}>
-                                <XrayLogo color="var(--mantine-color-dimmed)" size={12} />
-                                <Text c="dimmed" ff="monospace" size="xs">
+                                <XrayLogo
+                                    color={
+                                        Boolean(
+                                            (node.versions as any)?.isCustom ||
+                                            (node.versions as any)?.isCustomXray ||
+                                            node.versions?.xray?.toLowerCase().includes("custom") ||
+                                            node.versions?.xray?.toLowerCase().includes("mod")
+                                        )
+                                            ? "var(--mantine-color-blue-5)"
+                                            : "var(--mantine-color-dimmed)"
+                                    }
+                                    size={12}
+                                />
+                                <Text
+                                    c={
+                                        Boolean(
+                                            (node.versions as any)?.isCustom ||
+                                            (node.versions as any)?.isCustomXray ||
+                                            node.versions?.xray?.toLowerCase().includes("custom") ||
+                                            node.versions?.xray?.toLowerCase().includes("mod")
+                                        )
+                                            ? "blue.4"
+                                            : "dimmed"
+                                    }
+                                    ff="monospace"
+                                    size="xs"
+                                >
                                     {node.versions ? node.versions.xray : '—'}
                                 </Text>
                             </Flex>

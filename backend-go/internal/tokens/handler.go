@@ -62,10 +62,7 @@ func (h *Handler) GetApiTokens(w http.ResponseWriter, r *http.Request) {
 
 	result := make([]ApiTokenItem, 0, len(tokens))
 	for _, t := range tokens {
-		var scopes []string
-		if t.Scopes != "" {
-			_ = json.Unmarshal([]byte(t.Scopes), &scopes)
-		}
+		scopes := []string(t.Scopes)
 		if len(scopes) == 0 {
 			scopes = []string{"*"}
 		}
@@ -137,14 +134,16 @@ func (h *Handler) CreateApiToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	scopesBytes, _ := json.Marshal(body.Scopes)
+	scopes := body.Scopes
+	if len(scopes) == 0 {
+		scopes = []string{"*"}
+	}
 
 	dbToken := database.ApiToken{
 		UUID:      tokenUUID,
 		Name:      body.Name,
 		ExpireAt:  expireAt,
-		Token:     tokenString,
-		Scopes:    string(scopesBytes),
+		Scopes:    scopes,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

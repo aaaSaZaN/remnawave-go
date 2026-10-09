@@ -287,6 +287,10 @@ func (h *Handler) ReorderConfigProfiles(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 
 	var body struct {
+		Items []struct {
+			UUID         string `json:"uuid"`
+			ViewPosition int    `json:"viewPosition"`
+		} `json:"items"`
 		ConfigProfiles []struct {
 			UUID         string `json:"uuid"`
 			ViewPosition int    `json:"viewPosition"`
@@ -294,7 +298,12 @@ func (h *Handler) ReorderConfigProfiles(w http.ResponseWriter, r *http.Request) 
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
-	for _, item := range body.ConfigProfiles {
+	items := body.Items
+	if len(items) == 0 {
+		items = body.ConfigProfiles
+	}
+
+	for _, item := range items {
 		if item.UUID != "" {
 			h.service.DB().Model(&database.ConfigProfile{}).Where("uuid = ?", item.UUID).Update("view_position", item.ViewPosition)
 		}
@@ -775,13 +784,24 @@ func (h *Handler) CloneHost(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ReorderHosts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	hosts, _ := h.service.GetAllHosts()
-	res := make([]map[string]interface{}, 0, len(hosts))
-	for i := range hosts {
-		res = append(res, formatHostResponse(&hosts[i]))
+	var body struct {
+		Hosts []struct {
+			UUID         string `json:"uuid"`
+			ViewPosition int    `json:"viewPosition"`
+		} `json:"hosts"`
 	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	for _, item := range body.Hosts {
+		if item.UUID != "" {
+			h.service.DB().Model(&database.Host{}).Where("uuid = ?", item.UUID).Update("view_position", item.ViewPosition)
+		}
+	}
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"response": res,
+		"response": map[string]interface{}{
+			"isUpdated": true,
+		},
 	})
 }
 

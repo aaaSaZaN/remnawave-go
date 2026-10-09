@@ -234,7 +234,13 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Client IP extraction
-	clientIP := r.Header.Get("CF-Connecting-IP")
+	clientIP := r.Header.Get("X-Remnawave-Real-IP")
+	if clientIP == "" {
+		clientIP = r.Header.Get("x-remnawave-real-ip")
+	}
+	if clientIP == "" {
+		clientIP = r.Header.Get("CF-Connecting-IP")
+	}
 	if clientIP == "" {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
@@ -245,11 +251,15 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 		clientIP = r.Header.Get("X-Real-IP")
 	}
 	if clientIP == "" {
+		clientIP = r.Header.Get("True-Client-IP")
+	}
+	if clientIP == "" {
 		clientIP = r.RemoteAddr
 		if colon := strings.LastIndex(clientIP, ":"); colon != -1 {
 			clientIP = clientIP[:colon]
 		}
 	}
+	clientIP = strings.Trim(clientIP, "[]")
 
 	// Record request in history
 	ua := r.Header.Get("User-Agent")
@@ -263,6 +273,66 @@ func (h *Handler) GetSubscription(w http.ResponseWriter, r *http.Request) {
 			RequestAt:       time.Now().UTC(),
 		})
 	}(user.ID, clientIP, ua, matchedRuleName, matchedResponseType)
+
+	// HWID tracking
+	hwid := r.Header.Get("X-HWID")
+	if hwid == "" {
+		hwid = r.Header.Get("x-hwid")
+	}
+	if len(hwid) >= 10 && len(hwid) <= 64 {
+		var platform *string
+		if p := r.Header.Get("X-Device-OS"); p != "" {
+			platform = &p
+		} else if p := r.Header.Get("x-device-os"); p != "" {
+			platform = &p
+		}
+		var osVersion *string
+		if v := r.Header.Get("X-Ver-OS"); v != "" {
+			osVersion = &v
+		} else if v := r.Header.Get("x-ver-os"); v != "" {
+			osVersion = &v
+		}
+		var deviceModel *string
+		if m := r.Header.Get("X-Device-Model"); m != "" {
+			deviceModel = &m
+		} else if m := r.Header.Get("x-device-model"); m != "" {
+			deviceModel = &m
+		}
+		var reqIP *string
+		if clientIP != "" {
+			reqIP = &clientIP
+		}
+		var userAgent *string
+		if ua != "" {
+			userAgent = &ua
+		}
+
+		go func(hDev database.HwidDevice) {
+			var existing database.HwidDevice
+			if err := h.db.Where("hwid = ? AND user_id = ?", hDev.HWID, hDev.UserID).First(&existing).Error; err != nil {
+				h.db.Create(&hDev)
+			} else {
+				h.db.Model(&existing).Updates(map[string]interface{}{
+					"platform":     hDev.Platform,
+					"os_version":   hDev.OSVersion,
+					"device_model": hDev.DeviceModel,
+					"user_agent":   hDev.UserAgent,
+					"request_ip":   hDev.RequestIP,
+					"updated_at":   hDev.UpdatedAt,
+				})
+			}
+		}(database.HwidDevice{
+			HWID:        hwid,
+			UserID:      user.ID,
+			Platform:    platform,
+			OSVersion:   osVersion,
+			DeviceModel: deviceModel,
+			UserAgent:   userAgent,
+			RequestIP:   reqIP,
+			CreatedAt:   time.Now().UTC(),
+			UpdatedAt:   time.Now().UTC(),
+		})
+	}
 
 	// Handle response actions
 	if matchedResponseType == "BLOCK" {

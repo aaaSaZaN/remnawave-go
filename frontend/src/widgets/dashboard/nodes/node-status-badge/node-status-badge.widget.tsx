@@ -21,7 +21,13 @@ export const NodeStatusBadgeWidget = memo(
             let color = 'red'
             let status = ''
 
-            if (nodeData.isConnected) {
+            if (nodeData.isDisabled) {
+                icon = (
+                    <PiProhibitDuotone size={18} style={{ color: 'var(--mantine-color-gray-6)' }} />
+                )
+                color = 'gray'
+                status = t('node-status-badge.widget.disabled')
+            } else if (nodeData.isConnected && (!nodeData.lastStatusMessage || nodeData.lastStatusMessage === 'OK') && (nodeData.xrayUptime ?? 1) > 0) {
                 icon = <PiPulseDuotone size={18} style={{ color: 'var(--mantine-color-teal-6)' }} />
                 color = 'teal'
                 status = t('node-status-badge.widget.connected')
@@ -34,20 +40,14 @@ export const NodeStatusBadgeWidget = memo(
                 )
                 color = 'var(--mantine-color-yellow-3)'
                 status = t('node-status-badge.widget.connecting')
-            } else if (nodeData.isDisabled) {
-                icon = (
-                    <PiProhibitDuotone size={18} style={{ color: 'var(--mantine-color-gray-6)' }} />
-                )
-                color = 'gray'
-                status = t('node-status-badge.widget.disabled')
             } else {
                 icon = <PiWarningCircle size={18} style={{ color: 'var(--mantine-color-red-3)' }} />
                 color = 'red'
-                status = t('node-status-badge.widget.disconnected')
+                status = nodeData.lastStatusMessage || t('node-status-badge.widget.disconnected')
             }
 
             return { icon, color, status }
-        }, [nodeData.isConnected, nodeData.isConnecting, nodeData.isDisabled, t])
+        }, [nodeData.isConnected, nodeData.isConnecting, nodeData.isDisabled, nodeData.lastStatusMessage, nodeData.xrayUptime, t])
 
         if (!withText) {
             return (

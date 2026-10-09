@@ -5,7 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -303,6 +305,7 @@ func (s *StubHandler) UpdateNodePlugin(w http.ResponseWriter, r *http.Request) {
 	}
 	p.UpdatedAt = time.Now().UTC()
 	s.db.Save(&p)
+	s.syncPluginToNodes(p.UUID)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": formatPlugin(&p),
 	})
@@ -328,11 +331,71 @@ func (s *StubHandler) CloneNodePlugin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *StubHandler) ReorderNodePlugins(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Items []struct {
+			UUID         string `json:"uuid"`
+			ViewPosition int    `json:"viewPosition"`
+		} `json:"items"`
+		NodePlugins []struct {
+			UUID         string `json:"uuid"`
+			ViewPosition int    `json:"viewPosition"`
+		} `json:"nodePlugins"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	items := body.Items
+	if len(items) == 0 {
+		items = body.NodePlugins
+	}
+
+	for _, item := range items {
+		if item.UUID != "" {
+			s.db.Model(&database.NodePlugin{}).Where("uuid = ?", item.UUID).Update("view_position", item.ViewPosition)
+		}
+	}
+
 	s.GetNodePlugins(w, r)
+}
+
+func (s *StubHandler) syncPluginToNodes(pluginUUID string) {
+	if s.nodeClient == nil || pluginUUID == "" {
+		return
+	}
+	var np database.NodePlugin
+	if err := s.db.Where("uuid = ?", pluginUUID).First(&np).Error; err != nil {
+		return
+	}
+	var pluginCfg map[string]interface{}
+	_ = json.Unmarshal([]byte(np.PluginConfig), &pluginCfg)
+	syncPayload := map[string]interface{}{
+		"plugin": map[string]interface{}{
+			"uuid":   np.UUID,
+			"name":   np.Name,
+			"config": pluginCfg,
+		},
+	}
+	var targetNodes []database.Node
+	s.db.Where("active_plugin_uuid = ? AND is_disabled = false", pluginUUID).Find(&targetNodes)
+	for _, n := range targetNodes {
+		nodeCopy := n
+		go s.nodeClient.SyncPlugin(&nodeCopy, syncPayload)
+	}
 }
 
 func (s *StubHandler) SyncNodePlugin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	var body struct {
+		PluginUUID string `json:"pluginUuid"`
+		UUID       string `json:"uuid"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	targetUUID := body.PluginUUID
+	if targetUUID == "" {
+		targetUUID = body.UUID
+	}
+	if targetUUID != "" {
+		s.syncPluginToNodes(targetUUID)
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"response": map[string]interface{}{"success": true}})
 }
 
@@ -591,11 +654,15 @@ func (s *StubHandler) GetApiTokens(w http.ResponseWriter, r *http.Request) {
 	s.db.Find(&tokens)
 	res := make([]map[string]interface{}, 0, len(tokens))
 	for _, t := range tokens {
+		scopes := []string(t.Scopes)
+		if len(scopes) == 0 {
+			scopes = []string{"*"}
+		}
 		res = append(res, map[string]interface{}{
 			"uuid":      t.UUID,
 			"name":      t.Name,
 			"expireAt":  t.ExpireAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-			"scopes":    []string{"*"},
+			"scopes":    scopes,
 			"createdAt": t.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 			"updatedAt": t.UpdatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		})
@@ -621,15 +688,24 @@ func (s *StubHandler) CreateApiToken(w http.ResponseWriter, r *http.Request) {
 	tokenStr := fmt.Sprintf("rw_%s", base64.RawURLEncoding.EncodeToString(tokBytes))
 	now := time.Now().UTC()
 
+	scopes := body.Scopes
+	if len(scopes) == 0 {
+		scopes = []string{"*"}
+	}
+
 	t := database.ApiToken{
 		UUID:      uuid.New().String(),
 		Name:      strings.TrimSpace(body.Name),
 		ExpireAt:  body.ExpireAt,
-		Token:     tokenStr,
+		Scopes:    scopes,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	s.db.Create(&t)
+	if err := s.db.Create(&t).Error; err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": err.Error()})
+		return
+	}
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -637,7 +713,7 @@ func (s *StubHandler) CreateApiToken(w http.ResponseWriter, r *http.Request) {
 			"uuid":      t.UUID,
 			"name":      t.Name,
 			"expireAt":  t.ExpireAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-			"scopes":    body.Scopes,
+			"scopes":    t.Scopes,
 			"createdAt": t.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 			"updatedAt": t.UpdatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 			"token":     tokenStr,
@@ -975,7 +1051,7 @@ func (s *StubHandler) GetHwidStats(w http.ResponseWriter, r *http.Request) {
 
 	avg := 0.0
 	if totalUsers > 0 {
-		avg = float64(totalHwidDevices) / float64(totalUsers)
+		avg = math.Round((float64(totalHwidDevices)/float64(totalUsers))*100) / 100
 	}
 
 	type AppCount struct {
@@ -988,36 +1064,60 @@ func (s *StubHandler) GetHwidStats(w http.ResponseWriter, r *http.Request) {
 		ByApp    []AppCount `json:"byApp"`
 	}
 
-	type Row struct {
-		Platform string
-		App      string
-		Count    int
+	var devRows []struct {
+		Platform  *string `gorm:"column:platform"`
+		UserAgent *string `gorm:"column:user_agent"`
 	}
-	var rows []Row
-	s.db.Raw(`
-SELECT
-    COALESCE(platform, 'Unknown') as platform,
-    COALESCE(SPLIT_PART(user_agent, '/', 1), 'Unknown') as app,
-    COUNT(hwid) as count
-FROM hwid_user_devices
-WHERE platform IS NOT NULL
-GROUP BY platform, SPLIT_PART(user_agent, '/', 1)
-`).Scan(&rows)
+	s.db.Model(&database.HwidDevice{}).Where("platform IS NOT NULL").Select("platform, user_agent").Find(&devRows)
+
+	type platAppKey struct {
+		plat string
+		app  string
+	}
+	counts := make(map[platAppKey]int)
+	platTotals := make(map[string]int)
+
+	for _, d := range devRows {
+		if d.Platform == nil || *d.Platform == "" {
+			continue
+		}
+		plat := *d.Platform
+		app := "Unknown"
+		if d.UserAgent != nil && *d.UserAgent != "" {
+			ua := *d.UserAgent
+			if strings.HasPrefix(ua, "https:") {
+				continue
+			}
+			parts := strings.Split(ua, "/")
+			if len(parts) > 0 && parts[0] != "" {
+				app = parts[0]
+			}
+		}
+		k := platAppKey{plat: plat, app: app}
+		counts[k]++
+		platTotals[plat]++
+	}
 
 	platMap := make(map[string]*PlatformGroup)
-	for _, r := range rows {
-		pg, ok := platMap[r.Platform]
+	for k, cnt := range counts {
+		pg, ok := platMap[k.plat]
 		if !ok {
-			pg = &PlatformGroup{Platform: r.Platform, ByApp: []AppCount{}}
-			platMap[r.Platform] = pg
+			pg = &PlatformGroup{Platform: k.plat, Count: platTotals[k.plat], ByApp: []AppCount{}}
+			platMap[k.plat] = pg
 		}
-		pg.Count += r.Count
-		pg.ByApp = append(pg.ByApp, AppCount{App: r.App, Count: r.Count})
+		pg.ByApp = append(pg.ByApp, AppCount{App: k.app, Count: cnt})
 	}
+
 	byPlat := make([]PlatformGroup, 0, len(platMap))
 	for _, pg := range platMap {
+		sort.Slice(pg.ByApp, func(i, j int) bool {
+			return pg.ByApp[i].Count > pg.ByApp[j].Count
+		})
 		byPlat = append(byPlat, *pg)
 	}
+	sort.Slice(byPlat, func(i, j int) bool {
+		return byPlat[i].Count > byPlat[j].Count
+	})
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
@@ -1033,33 +1133,41 @@ GROUP BY platform, SPLIT_PART(user_agent, '/', 1)
 
 func (s *StubHandler) GetHwidTopUsers(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 {
-		limit = 10
+	start, _ := strconv.Atoi(r.URL.Query().Get("start"))
+	size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+	if size <= 0 {
+		size, _ = strconv.Atoi(r.URL.Query().Get("limit"))
+	}
+	if size <= 0 {
+		size = 10
 	}
 	type TopUserRow struct {
-		UserID   uint64 `json:"userId"`
-		Username string `json:"username"`
-		Count    int    `json:"count"`
+		ID           uint64 `json:"id"`
+		Username     string `json:"username"`
+		DevicesCount int    `json:"devicesCount"`
 	}
 	var topUsers []TopUserRow
 	s.db.Raw(`
 SELECT
-    users.id as user_id,
+    users.id as id,
     users.username as username,
-    COUNT(hwid_user_devices.hwid) as count
+    COUNT(hwid_user_devices.hwid) as devices_count
 FROM hwid_user_devices
 JOIN users ON users.id = hwid_user_devices.user_id
 GROUP BY users.id, users.username
-ORDER BY count DESC
-LIMIT ?;
-`, limit).Scan(&topUsers)
+ORDER BY devices_count DESC, users.id ASC
+LIMIT ? OFFSET ?;
+`, size, start).Scan(&topUsers)
 	if topUsers == nil {
 		topUsers = []TopUserRow{}
 	}
+
+	var total int64
+	s.db.Raw(`SELECT COUNT(DISTINCT user_id) FROM hwid_user_devices`).Scan(&total)
+
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"total": len(topUsers),
+			"total": total,
 			"users": topUsers,
 		},
 	})
@@ -1072,10 +1180,33 @@ func (s *StubHandler) GetHwidDevices(w http.ResponseWriter, r *http.Request) {
 	if size <= 0 {
 		size = 50
 	}
+
+	query := s.db.Model(&database.HwidDevice{})
+	if filtersStr := r.URL.Query().Get("filters"); filtersStr != "" {
+		var filters []struct {
+			ID    string      `json:"id"`
+			Value interface{} `json:"value"`
+		}
+		if err := json.Unmarshal([]byte(filtersStr), &filters); err == nil {
+			for _, f := range filters {
+				if f.ID == "userId" {
+					query = query.Where("user_id = ?", f.Value)
+				} else if f.ID == "platform" {
+					query = query.Where("platform ILIKE ?", fmt.Sprintf("%%%v%%", f.Value))
+				} else if f.ID == "hwid" {
+					query = query.Where("hwid ILIKE ?", fmt.Sprintf("%%%v%%", f.Value))
+				} else if f.ID == "requestIp" {
+					query = query.Where("request_ip ILIKE ?", fmt.Sprintf("%%%v%%", f.Value))
+				}
+			}
+		}
+	}
+
 	var total int64
-	s.db.Model(&database.HwidDevice{}).Count(&total)
+	query.Count(&total)
+
 	var devices []database.HwidDevice
-	s.db.Order("created_at desc").Offset(start).Limit(size).Find(&devices)
+	query.Order("created_at desc").Offset(start).Limit(size).Find(&devices)
 	if devices == nil {
 		devices = []database.HwidDevice{}
 	}
@@ -1112,18 +1243,57 @@ func (s *StubHandler) GetUserHwidDevices(w http.ResponseWriter, r *http.Request)
 
 func (s *StubHandler) CreateHwidDevice(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	nowStr := time.Now().UTC().Format(time.RFC3339)
+	var req struct {
+		HWID        string  `json:"hwid"`
+		UserID      uint64  `json:"userId"`
+		Platform    *string `json:"platform"`
+		OSVersion   *string `json:"osVersion"`
+		DeviceModel *string `json:"deviceModel"`
+		UserAgent   *string `json:"userAgent"`
+		RequestIP   *string `json:"requestIp"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Invalid body"})
+		return
+	}
+
+	now := time.Now().UTC()
+	dev := database.HwidDevice{
+		HWID:        req.HWID,
+		UserID:      req.UserID,
+		Platform:    req.Platform,
+		OSVersion:   req.OSVersion,
+		DeviceModel: req.DeviceModel,
+		UserAgent:   req.UserAgent,
+		RequestIP:   req.RequestIP,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	var existing database.HwidDevice
+	if err := s.db.Where("hwid = ? AND user_id = ?", req.HWID, req.UserID).First(&existing).Error; err != nil {
+		s.db.Create(&dev)
+	} else {
+		s.db.Model(&existing).Updates(map[string]interface{}{
+			"platform":     req.Platform,
+			"os_version":   req.OSVersion,
+			"device_model": req.DeviceModel,
+			"user_agent":   req.UserAgent,
+			"request_ip":   req.RequestIP,
+			"updated_at":   now,
+		})
+	}
+
+	var devices []database.HwidDevice
+	s.db.Where("user_id = ?", req.UserID).Order("created_at desc").Find(&devices)
+	if devices == nil {
+		devices = []database.HwidDevice{}
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{
-			"hwid":        "00000000",
-			"userId":      1,
-			"platform":    nil,
-			"osVersion":   nil,
-			"deviceModel": nil,
-			"userAgent":   nil,
-			"requestIp":   nil,
-			"createdAt":   nowStr,
-			"updatedAt":   nowStr,
+			"total":   len(devices),
+			"devices": devices,
 		},
 	})
 }
@@ -1657,11 +1827,35 @@ func (s *StubHandler) GetSubHistory(w http.ResponseWriter, r *http.Request) {
 	if size <= 0 {
 		size = 50
 	}
+	query := s.db.Model(&database.UserSubscriptionRequestHistory{})
+
+	if filtersStr := r.URL.Query().Get("filters"); filtersStr != "" {
+		var filters []struct {
+			ID    string      `json:"id"`
+			Value interface{} `json:"value"`
+		}
+		if err := json.Unmarshal([]byte(filtersStr), &filters); err == nil {
+			for _, f := range filters {
+				if f.ID == "userId" {
+					query = query.Where("user_id = ?", f.Value)
+				} else if f.ID == "requestIp" {
+					query = query.Where("request_ip ILIKE ?", fmt.Sprintf("%%%v%%", f.Value))
+				} else if f.ID == "userAgent" {
+					query = query.Where("user_agent ILIKE ?", fmt.Sprintf("%%%v%%", f.Value))
+				} else if f.ID == "srrRuleName" {
+					query = query.Where("srr_rule_name ILIKE ?", fmt.Sprintf("%%%v%%", f.Value))
+				} else if f.ID == "srrResponseType" {
+					query = query.Where("srr_response_type = ?", f.Value)
+				}
+			}
+		}
+	}
+
 	var total int64
-	s.db.Model(&database.UserSubscriptionRequestHistory{}).Count(&total)
+	query.Count(&total)
 
 	var records []database.UserSubscriptionRequestHistory
-	s.db.Order("request_at desc").Offset(start).Limit(size).Find(&records)
+	query.Order("request_at desc").Offset(start).Limit(size).Find(&records)
 	if records == nil {
 		records = []database.UserSubscriptionRequestHistory{}
 	}

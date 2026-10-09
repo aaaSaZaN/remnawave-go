@@ -398,25 +398,48 @@ export const NodeDetailsCardWidget = memo((props: IProps) => {
                             </Group>
                         </Paper>
 
-                        {node.versions && (
-                            <Paper
-                                p="xs"
-                                radius="md"
-                                style={{
-                                    background: 'rgba(139, 92, 246, 0.08)',
-                                    border: '1px solid rgba(139, 92, 246, 0.2)'
-                                }}
-                            >
-                                <Tooltip label={t('node-details-card.widget.xray-core-version')}>
-                                    <Group gap="xs" justify="center">
-                                        <XrayLogo color="var(--mantine-color-violet-5)" size={16} />
-                                        <Text c="violet.5" fw={600} size="sm">
-                                            {node.versions.xray}
-                                        </Text>
-                                    </Group>
-                                </Tooltip>
-                            </Paper>
-                        )}
+                        {node.versions && (() => {
+                            const isCustomXray = Boolean(
+                                (node.versions as any)?.isCustom ||
+                                (node.versions as any)?.isCustomXray ||
+                                node.versions.xray?.toLowerCase().includes("custom") ||
+                                node.versions.xray?.toLowerCase().includes("mod")
+                            )
+                            return (
+                                <Paper
+                                    p="xs"
+                                    radius="md"
+                                    style={{
+                                        background: isCustomXray
+                                            ? "rgba(59, 130, 246, 0.08)"
+                                            : "rgba(20, 184, 166, 0.08)",
+                                        border: isCustomXray
+                                            ? "1px solid rgba(59, 130, 246, 0.25)"
+                                            : "1px solid rgba(20, 184, 166, 0.25)"
+                                    }}
+                                >
+                                    <Tooltip label={t("node-details-card.widget.xray-core-version")}>
+                                        <Group gap="xs" justify="center">
+                                            <XrayLogo
+                                                color={
+                                                    isCustomXray
+                                                        ? "var(--mantine-color-blue-5)"
+                                                        : "var(--mantine-color-teal-5)"
+                                                }
+                                                size={16}
+                                            />
+                                            <Text
+                                                c={isCustomXray ? "blue.5" : "teal.5"}
+                                                fw={600}
+                                                size="sm"
+                                            >
+                                                {node.versions.xray}
+                                            </Text>
+                                        </Group>
+                                    </Tooltip>
+                                </Paper>
+                            )
+                        })()}
 
                         {node.xrayUptime !== 0 && (
                             <Paper

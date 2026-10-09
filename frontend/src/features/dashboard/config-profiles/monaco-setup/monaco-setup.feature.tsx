@@ -520,7 +520,17 @@ const injectSharedListNames = (node: unknown, sharedLists: TSharedLists): void =
 export const MonacoSetupNodePluginEditorFeature = {
     setup: async (sharedLists: TSharedLists = []) => {
         try {
-            const schema = NodePluginEditorSchema.toJSONSchema()
+            const schema = NodePluginEditorSchema.toJSONSchema() as any
+            if (schema && typeof schema === "object") {
+                schema.additionalProperties = true
+                if (schema.properties) {
+                    schema.properties.sharedLists = {
+                        type: "array",
+                        items: { type: "object" },
+                        description: "Optional shared lists definition"
+                    }
+                }
+            }
 
             injectSharedListNames(schema, sharedLists)
 

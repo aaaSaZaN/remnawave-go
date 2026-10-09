@@ -161,7 +161,8 @@ func buildSingboxOutbound(user *database.User, hm XrayHostMeta) map[string]inter
 			"uuid":        user.VlessUUID,
 		}
 
-		if network == "tcp" && (security == "reality" || security == "tls") {
+		flow := ResolveVlessFlow(rawInbMap, network, security)
+		if flow == "xtls-rprx-vision" {
 			ob["flow"] = "xtls-rprx-vision"
 		}
 
