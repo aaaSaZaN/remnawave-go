@@ -2,6 +2,7 @@ package squads
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -21,11 +22,36 @@ func NewHandler(db *gorm.DB) *Handler {
 	return &Handler{db: db}
 }
 
-func formatInternalSquad(db *gorm.DB, s *database.InternalSquad) map[string]interface{} {
-	tags := []string{}
-	if s.Tags != "" {
-		_ = json.Unmarshal([]byte(s.Tags), &tags)
+func uniqueInboundUUIDs(inboundUUIDs []string) []string {
+	seen := make(map[string]struct{}, len(inboundUUIDs))
+	result := make([]string, 0, len(inboundUUIDs))
+	for _, inboundUUID := range inboundUUIDs {
+		inboundUUID = strings.TrimSpace(inboundUUID)
+		if inboundUUID == "" {
+			continue
+		}
+		if _, exists := seen[inboundUUID]; exists {
+			continue
+		}
+		seen[inboundUUID] = struct{}{}
+		result = append(result, inboundUUID)
 	}
+	return result
+}
+
+func internalSquadTags(raw string) []string {
+	if raw == "" {
+		return []string{}
+	}
+	var tags database.StringArray
+	if err := tags.Scan(raw); err == nil {
+		return []string(tags)
+	}
+	return []string{}
+}
+
+func formatInternalSquad(db *gorm.DB, s *database.InternalSquad) map[string]interface{} {
+	tags := internalSquadTags(s.Tags)
 
 	var membersCount int64
 	db.Model(&database.InternalSquadMember{}).Where("internal_squad_uuid = ?", s.UUID).Count(&membersCount)
@@ -124,36 +150,51 @@ func (h *Handler) CreateInternalSquad(w http.ResponseWriter, r *http.Request) {
 	if len(inboundIDs) == 0 && len(body.InboundUUIDs) > 0 {
 		inboundIDs = body.InboundUUIDs
 	}
+	inboundIDs = uniqueInboundUUIDs(inboundIDs)
 
 	var count int64
 	h.db.Model(&database.InternalSquad{}).Count(&count)
 
 	newUUID := uuid.New().String()
 	now := time.Now().UTC()
-	inbBytes, _ := json.Marshal(inboundIDs)
-
 	s := database.InternalSquad{
 		UUID:         newUUID,
 		ViewPosition: int(count) + 1,
 		Name:         strings.TrimSpace(body.Name),
 		Tags:         "[]",
-		Description:  "",
-		InboundUUIDs: string(inbBytes),
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
 
-	if err := h.db.Create(&s).Error; err != nil {
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table("internal_squads").Create(map[string]interface{}{
+			"uuid":          s.UUID,
+			"view_position": s.ViewPosition,
+			"name":          s.Name,
+			"tags":          database.StringArray{},
+			"created_at":    s.CreatedAt,
+			"updated_at":    s.UpdatedAt,
+		}).Error; err != nil {
+			return err
+		}
+
+		links := make([]database.InternalSquadInbound, 0, len(inboundIDs))
+		for _, inbID := range inboundIDs {
+			links = append(links, database.InternalSquadInbound{
+				InternalSquadUUID: newUUID,
+				InboundUUID:       inbID,
+			})
+		}
+		if len(links) == 0 {
+			return nil
+		}
+		return tx.Create(&links).Error
+	})
+	if err != nil {
+		log.Printf("[SQUADS] failed to create squad name=%q: %v", s.Name, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Failed to create squad"})
 		return
-	}
-
-	for _, inbID := range inboundIDs {
-		h.db.Create(&database.InternalSquadInbound{
-			InternalSquadUUID: newUUID,
-			InboundUUID:       inbID,
-		})
 	}
 
 	w.WriteHeader(http.StatusCreated)
@@ -195,26 +236,46 @@ func (h *Handler) UpdateInternalSquad(w http.ResponseWriter, r *http.Request) {
 		targetInbounds = body.InboundUUIDs
 	}
 
-	if targetInbounds != nil {
-		inbBytes, _ := json.Marshal(*targetInbounds)
-		s.InboundUUIDs = string(inbBytes)
+	updatedAt := time.Now().UTC()
+	updates := map[string]interface{}{"updated_at": updatedAt}
+	if body.Name != nil {
+		updates["name"] = s.Name
+	}
+	err := h.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&database.InternalSquad{}).
+			Where("uuid = ?", s.UUID).
+			Updates(updates).Error; err != nil {
+			return err
+		}
 
-		// Sync internal_squad_inbounds
-		h.db.Where("internal_squad_uuid = ?", s.UUID).Delete(&database.InternalSquadInbound{})
-		for _, inbID := range *targetInbounds {
-			h.db.Create(&database.InternalSquadInbound{
+		if targetInbounds == nil {
+			return nil
+		}
+		if err := tx.Where("internal_squad_uuid = ?", s.UUID).
+			Delete(&database.InternalSquadInbound{}).Error; err != nil {
+			return err
+		}
+
+		inboundUUIDs := uniqueInboundUUIDs(*targetInbounds)
+		links := make([]database.InternalSquadInbound, 0, len(inboundUUIDs))
+		for _, inboundUUID := range inboundUUIDs {
+			links = append(links, database.InternalSquadInbound{
 				InternalSquadUUID: s.UUID,
-				InboundUUID:       inbID,
+				InboundUUID:       inboundUUID,
 			})
 		}
-	}
-	s.UpdatedAt = time.Now().UTC()
-
-	if err := h.db.Save(&s).Error; err != nil {
+		if len(links) == 0 {
+			return nil
+		}
+		return tx.Create(&links).Error
+	})
+	if err != nil {
+		log.Printf("[SQUADS] failed to update squad uuid=%s: %v", s.UUID, err)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Failed to update squad"})
 		return
 	}
+	s.UpdatedAt = updatedAt
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": formatInternalSquad(h.db, &s),
@@ -270,13 +331,8 @@ func (h *Handler) GetInternalSquadsTags(w http.ResponseWriter, r *http.Request) 
 
 	tagMap := make(map[string]bool)
 	for _, s := range squads {
-		if s.Tags != "" {
-			var tags []string
-			if err := json.Unmarshal([]byte(s.Tags), &tags); err == nil {
-				for _, tag := range tags {
-					tagMap[tag] = true
-				}
-			}
+		for _, tag := range internalSquadTags(s.Tags) {
+			tagMap[tag] = true
 		}
 	}
 
@@ -305,8 +361,10 @@ func (h *Handler) SetInternalSquadsTags(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tagsBytes, _ := json.Marshal(body.Tags)
-	h.db.Model(&database.InternalSquad{}).Where("uuid = ?", body.UUID).Update("tags", string(tagsBytes))
+	if body.Tags == nil {
+		body.Tags = []string{}
+	}
+	h.db.Model(&database.InternalSquad{}).Where("uuid = ?", body.UUID).Update("tags", database.StringArray(body.Tags))
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"response": map[string]interface{}{

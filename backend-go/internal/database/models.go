@@ -369,8 +369,6 @@ type InternalSquad struct {
 	ViewPosition int       `gorm:"default:0" json:"viewPosition"`
 	Name         string    `gorm:"uniqueIndex;type:varchar(64)" json:"name"`
 	Tags         string    `gorm:"type:text;default:'[]'"`
-	Description  string    `gorm:"type:text" json:"description"`
-	InboundUUIDs string    `gorm:"type:text;default:'[]'"`
 	CreatedAt    time.Time `json:"createdAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
 }
