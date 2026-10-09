@@ -564,7 +564,6 @@ func (c *Client) GetCombinedStats(node *database.Node, reset bool) (*NodeCombine
 	return &res.Response, nil
 }
 
-
 type NodeUserInboundData struct {
 	Type       string  `json:"type"`
 	Tag        string  `json:"tag"`
@@ -592,7 +591,7 @@ type RemoveUserRequestPayload struct {
 }
 
 func (c *Client) AddUser(node *database.Node, payload AddUserRequestPayload) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	url := fmt.Sprintf("https://%s:%d/node/handler/add-user", node.Address, getNodePort(node))
 	resp, err := c.doRequest(ctx, "POST", url, payload)
@@ -603,6 +602,19 @@ func (c *Client) AddUser(node *database.Node, payload AddUserRequestPayload) err
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("node returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Response *struct {
+			Success *bool   `json:"success"`
+			Error   *string `json:"error"`
+		} `json:"response"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err == nil && result.Response != nil && result.Response.Success != nil && !*result.Response.Success {
+		if result.Response.Error != nil && *result.Response.Error != "" {
+			return fmt.Errorf("node rejected user sync: %s", *result.Response.Error)
+		}
+		return fmt.Errorf("node rejected user sync")
 	}
 	return nil
 }
@@ -622,4 +634,3 @@ func (c *Client) RemoveUser(node *database.Node, payload RemoveUserRequestPayloa
 	}
 	return nil
 }
-

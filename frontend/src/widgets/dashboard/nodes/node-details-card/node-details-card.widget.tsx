@@ -17,7 +17,8 @@ import {
     SimpleGrid,
     Text,
     ThemeIconProps,
-    Tooltip
+    Tooltip,
+    UnstyledButton
 } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { GetNodeCommand, UpdateNodeCommand } from '@remnawave/backend-contract'
@@ -30,8 +31,9 @@ import {
     PiUsersDuotone,
     PiWarningCircle
 } from 'react-icons/pi'
-import { TbJson, TbPower, TbWifi, TbWifiOff } from 'react-icons/tb'
+import { TbChevronRight, TbJson, TbPower, TbWifi, TbWifiOff } from 'react-icons/tb'
 
+import { showModal } from '@shared/_modals/show-modal'
 import { queryClient } from '@shared/api'
 import { QueryKeys, useDisableNode, useEnableNode, useGetNodeMetadata } from '@shared/api/hooks'
 import { Logo } from '@shared/ui'
@@ -399,6 +401,9 @@ export const NodeDetailsCardWidget = memo((props: IProps) => {
                         </Paper>
 
                         {node.versions && (() => {
+                            const isGoNode =
+                                (node.versions as any)?.nodeType === 'go' ||
+                                node.versions.node?.includes('(Go)')
                             const isCustomXray = Boolean(
                                 (node.versions as any)?.isCustom ||
                                 (node.versions as any)?.isCustomXray ||
@@ -418,24 +423,62 @@ export const NodeDetailsCardWidget = memo((props: IProps) => {
                                             : "1px solid rgba(20, 184, 166, 0.25)"
                                     }}
                                 >
-                                    <Tooltip label={t("node-details-card.widget.xray-core-version")}>
-                                        <Group gap="xs" justify="center">
-                                            <XrayLogo
-                                                color={
-                                                    isCustomXray
-                                                        ? "var(--mantine-color-blue-5)"
-                                                        : "var(--mantine-color-teal-5)"
-                                                }
-                                                size={16}
-                                            />
-                                            <Text
-                                                c={isCustomXray ? "blue.5" : "teal.5"}
-                                                fw={600}
-                                                size="sm"
-                                            >
-                                                {node.versions.xray}
-                                            </Text>
-                                        </Group>
+                                    <Tooltip
+                                        label={
+                                            isGoNode
+                                                ? 'Нажмите, чтобы выбрать версию Xray Core'
+                                                : t('node-details-card.widget.xray-core-version')
+                                        }
+                                    >
+                                        <UnstyledButton
+                                            aria-label={
+                                                isGoNode
+                                                    ? `Выбрать версию Xray Core. Установлена ${node.versions.xray}`
+                                                    : t('node-details-card.widget.xray-core-version')
+                                            }
+                                            disabled={!isGoNode}
+                                            onClick={() =>
+                                                isGoNode &&
+                                                showModal('nodes_updateNodeModal', { node, initialTab: 'core' })
+                                            }
+                                            style={{
+                                                borderRadius: 'var(--mantine-radius-sm)',
+                                                cursor: isGoNode ? 'pointer' : 'default',
+                                                display: 'block',
+                                                width: '100%'
+                                            }}
+                                        >
+                                            <Group gap="xs" justify="center">
+                                                <XrayLogo
+                                                    color={
+                                                        isCustomXray
+                                                            ? 'var(--mantine-color-blue-5)'
+                                                            : 'var(--mantine-color-teal-5)'
+                                                    }
+                                                    size={16}
+                                                />
+                                                <Text
+                                                    c={isCustomXray ? 'blue.5' : 'teal.5'}
+                                                    fw={600}
+                                                    size="sm"
+                                                    td={isGoNode ? 'underline' : undefined}
+                                                    style={
+                                                        isGoNode
+                                                            ? { textDecorationStyle: 'dotted', textUnderlineOffset: 3 }
+                                                            : undefined
+                                                    }
+                                                >
+                                                    {node.versions.xray}
+                                                </Text>
+                                                {isGoNode && (
+                                                    <TbChevronRight
+                                                        aria-hidden
+                                                        color="var(--mantine-color-dimmed)"
+                                                        size={14}
+                                                    />
+                                                )}
+                                            </Group>
+                                        </UnstyledButton>
                                     </Tooltip>
                                 </Paper>
                             )

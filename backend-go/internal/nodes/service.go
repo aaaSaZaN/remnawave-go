@@ -3,6 +3,7 @@ package nodes
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"math"
 	"strconv"
 	"strings"
@@ -86,11 +87,11 @@ type CreateNodeDTO struct {
 	TrafficLimitBytes         uint64   `json:"trafficLimitBytes"`
 	ConsumptionMultiplier     *float64 `json:"consumptionMultiplier"`
 	NodeConsumptionMultiplier *float64 `json:"nodeConsumptionMultiplier"`
-	ActiveConfigProfileUUID *string `json:"activeConfigProfileUuid"`
-	ActivePluginUUID        *string `json:"activePluginUuid"`
-	ProviderUUID            *string `json:"providerUuid"`
-	Note                    *string `json:"note"`
-	ConfigProfile           *struct {
+	ActiveConfigProfileUUID   *string  `json:"activeConfigProfileUuid"`
+	ActivePluginUUID          *string  `json:"activePluginUuid"`
+	ProviderUUID              *string  `json:"providerUuid"`
+	Note                      *string  `json:"note"`
+	ConfigProfile             *struct {
 		ActiveConfigProfileUUID string   `json:"activeConfigProfileUuid"`
 		ActiveInbounds          []string `json:"activeInbounds"`
 	} `json:"configProfile"`
@@ -596,6 +597,14 @@ func (s *Service) syncUserToSingleNode(node *database.Node, user *database.User,
 		Joins("JOIN config_profile_inbounds ON config_profile_inbounds_to_nodes.config_profile_inbound_uuid = config_profile_inbounds.uuid").
 		Where("config_profile_inbounds_to_nodes.node_uuid = ?", node.UUID).
 		Pluck("tag", &activeTags)
+	// Older node records have no explicit per-node inbound links. The API response
+	// already treats this as "use the active profile", so user synchronization
+	// must resolve tags the same way.
+	if len(activeTags) == 0 && node.ActiveConfigProfileUUID != nil && *node.ActiveConfigProfileUUID != "" {
+		s.db.Table("config_profile_inbounds").
+			Where("profile_uuid = ?", *node.ActiveConfigProfileUUID).
+			Pluck("tag", &activeTags)
+	}
 
 	tagSet := make(map[string]bool)
 	for _, t := range activeTags {
@@ -657,7 +666,9 @@ func (s *Service) syncUserToSingleNode(node *database.Node, user *database.User,
 			Data: matchedData,
 		}
 		go func(n database.Node, r AddUserRequestPayload) {
-			_ = s.client.AddUser(&n, r)
+			if err := s.client.AddUser(&n, r); err != nil {
+				log.Printf("[NODES] Failed to sync user id=%d to node %q: %v", user.ID, n.Name, err)
+			}
 		}(*node, req)
 	} else {
 		req := RemoveUserRequestPayload{
@@ -667,7 +678,9 @@ func (s *Service) syncUserToSingleNode(node *database.Node, user *database.User,
 			},
 		}
 		go func(n database.Node, r RemoveUserRequestPayload) {
-			_ = s.client.RemoveUser(&n, r)
+			if err := s.client.RemoveUser(&n, r); err != nil {
+				log.Printf("[NODES] Failed to remove user id=%d from node %q: %v", user.ID, n.Name, err)
+			}
 		}(*node, req)
 	}
 }
@@ -682,9 +695,11 @@ func (s *Service) SyncAllUsersToNode(node *database.Node) {
 	}
 	for i := range users {
 		inbounds, err := s.GetUserResolvedInbounds(users[i].ID)
-		if err == nil {
-			s.syncUserToSingleNode(node, &users[i], nil, inbounds)
+		if err != nil {
+			log.Printf("[NODES] Failed to resolve inbounds for user id=%d: %v", users[i].ID, err)
+			continue
 		}
+		s.syncUserToSingleNode(node, &users[i], nil, inbounds)
 	}
 }
 
@@ -700,6 +715,7 @@ func (s *Service) SyncUserToNodes(user *database.User, prevVlessUUID *string) {
 
 	inbounds, err := s.GetUserResolvedInbounds(user.ID)
 	if err != nil {
+		log.Printf("[NODES] Failed to resolve inbounds for user id=%d: %v", user.ID, err)
 		return
 	}
 
@@ -740,4 +756,3 @@ func (s *Service) SyncAllUsersToConnectedNodes() {
 		s.SyncUserToNodes(&users[i], nil)
 	}
 }
-

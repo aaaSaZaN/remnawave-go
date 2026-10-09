@@ -1,9 +1,7 @@
 import NiceModal, { useModal } from '@ebay/nice-modal-react'
 import {
-    ActionIcon,
     Alert,
     Badge,
-    Box,
     Button,
     Checkbox,
     Divider,
@@ -12,21 +10,19 @@ import {
     Modal,
     Select,
     Stack,
-    Switch,
+    Tabs,
     Text,
-    TextInput,
-    Tooltip
+    TextInput
 } from '@mantine/core'
 import { GetNodeCommand } from '@remnawave/backend-contract'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
     TbAlertTriangle,
     TbArrowRight,
     TbCheck,
     TbCloudDownload,
-    TbCpu,
-    TbRefresh
+    TbCpu
 } from 'react-icons/tb'
 
 import { useNiceMantineModal } from '@shared/_modals/use-nice-modal'
@@ -35,6 +31,13 @@ import { BaseOverlayHeader } from '@shared/ui/overlays/base-overlay-header'
 
 interface IProps {
     node: GetNodeCommand.Response['response']
+    initialTab?: 'node' | 'core'
+}
+
+interface IReleaseAsset {
+    name: string
+    browser_download_url: string
+    size: number
 }
 
 interface IReleaseInfo {
@@ -42,6 +45,7 @@ interface IReleaseInfo {
     name: string
     prerelease: boolean
     published_at: string
+    assets: IReleaseAsset[]
 }
 
 interface IUpdatesCheckResponse {
@@ -52,139 +56,270 @@ interface IUpdatesCheckResponse {
     architecture: string
     os: string
     currentCoreVersion: string
+    error?: string
+}
+
+type ReleaseChannel = 'stable' | 'prerelease' | 'version'
+
+const NODE_REPOSITORY = 'aaaSaZaN/remnanode-go'
+const XRAY_REPOSITORY = 'XTLS/Xray-core'
+
+const archAliases: Record<string, string[]> = {
+    amd64: ['amd64', 'x86_64', 'linux-64', '64bit'],
+    arm64: ['arm64-v8a', 'arm64v8', 'arm64', 'aarch64'],
+    arm: ['arm32-v7a', 'armv7', 'arm32-v6', 'armv6', 'armhf', 'arm'],
+    mipsle: ['mips32le', 'mipsle', 'mipsel'],
+    mips: ['mips32', 'mips'],
+    mips64le: ['mips64le'],
+    mips64: ['mips64'],
+    '386': ['linux-32', '386', 'i386', '32bit', 'x86']
+}
+
+function getCompatibleAsset(
+    release: IReleaseInfo,
+    os: string,
+    architecture: string,
+    binaryName: 'remnanode' | 'rw-core'
+) {
+    const aliases = archAliases[architecture] || [architecture]
+    const assets = release.assets || []
+    const matches = (asset: IReleaseAsset, alias: string, requireOS: boolean) => {
+        const name = asset.name.toLowerCase()
+        if (['.dgst', '.sha256', '.sha512', '.sha1', '.sig', '.asc', '.txt', '.json'].some((suffix) => name.endsWith(suffix))) {
+            return false
+        }
+        if (requireOS && !name.includes(os.toLowerCase())) return false
+        if ((architecture === 'mips' || architecture === 'mips64') && (name.includes('le') || name.includes('el'))) {
+            return false
+        }
+        return name.includes(alias.toLowerCase()) &&
+            (binaryName === 'rw-core' || name.includes(binaryName))
+    }
+
+    for (const alias of aliases) {
+        const asset = assets.find((candidate) => matches(candidate, alias, true))
+        if (asset) return asset
+    }
+    for (const alias of aliases) {
+        const asset = assets.find((candidate) => matches(candidate, alias, false))
+        if (asset) return asset
+    }
+    return undefined
+}
+
+function getErrorMessage(error: unknown) {
+    const value = error as {
+        message?: string
+        response?: { data?: { message?: string; error?: string } }
+    }
+    return value?.response?.data?.message || value?.response?.data?.error || value?.message || 'Не удалось выполнить обновление.'
 }
 
 export const UpdateNodeModal = NiceModal.create((props: IProps) => {
-    const { node } = props
+    const { node, initialTab = 'node' } = props
     const modal = useModal()
     const { modalProps, hide } = useNiceMantineModal({ modal })
 
-    const [channel, setChannel] = useState<'stable' | 'prerelease' | 'custom' | 'manual'>('stable')
-    const [selectedVersion, setSelectedVersion] = useState<string>('')
-    const [manualVersion, setManualVersion] = useState<string>('')
-    const [confirmed, setConfirmed] = useState<boolean>(false)
+    const [activeTab, setActiveTab] = useState<'node' | 'core'>(initialTab)
+    const [nodeChannel, setNodeChannel] = useState<ReleaseChannel>('stable')
+    const [selectedNodeVersion, setSelectedNodeVersion] = useState<string | null>(null)
+    const [coreChannel, setCoreChannel] = useState<ReleaseChannel>('stable')
+    const [selectedCoreVersion, setSelectedCoreVersion] = useState<string | null>(null)
+    const [coreDownloadUrl, setCoreDownloadUrl] = useState('')
+    const [confirmed, setConfirmed] = useState(false)
 
-    const isGoNode =
-        (node as any)?.versions?.nodeType === "go" ||
-        (node as any)?.versions?.node?.includes("(Go)")
+    useEffect(() => {
+        if (modal.visible) {
+            setActiveTab(initialTab)
+            setConfirmed(false)
+        }
+    }, [initialTab, modal.visible])
 
-    const [nodeRepo, setNodeRepo] = useState<string>(
-        isGoNode ? "aaaSaZaN/remnanode-go" : "remnawave/node"
-    )
-
-    const [isCustomCoreEnabled, setIsCustomCoreEnabled] = useState<boolean>(false)
-    const [customCoreRepo, setCustomCoreRepo] = useState<string>('XTLS/Xray-core')
-    const [customCoreVersion, setCustomCoreVersion] = useState<string>('')
-
-    const {
-        data: updateInfo,
-        isLoading,
-        refetch
-    } = useQuery({
-        queryKey: ['node-updates-check', node.uuid, nodeRepo],
+    const nodeUpdatesQuery = useQuery({
+        queryKey: ['node-updates-check', node.uuid, NODE_REPOSITORY],
         queryFn: async () => {
             const res = await instance.get<{ response: IUpdatesCheckResponse }>(
                 `/api/nodes/${node.uuid}/updates` as any,
-                { params: { repo: nodeRepo } }
+                { params: { repo: NODE_REPOSITORY } }
             )
             return res.data.response
         },
+        enabled: activeTab === 'node',
         refetchOnWindowFocus: false
     })
 
+    const coreUpdatesQuery = useQuery({
+        queryKey: ['node-updates-check', node.uuid, XRAY_REPOSITORY],
+        queryFn: async () => {
+            const res = await instance.get<{ response: IUpdatesCheckResponse }>(
+                `/api/nodes/${node.uuid}/updates` as any,
+                { params: { repo: XRAY_REPOSITORY } }
+            )
+            return res.data.response
+        },
+        enabled: activeTab === 'core',
+        refetchOnWindowFocus: false
+    })
+
+    const nodeReleases = nodeUpdatesQuery.data?.allReleases || []
+    const coreReleases = coreUpdatesQuery.data?.allReleases || []
+    const nodeOptions = useMemo(
+        () => nodeReleases
+            .filter((release) => getCompatibleAsset(
+                release,
+                nodeUpdatesQuery.data?.os || 'linux',
+                nodeUpdatesQuery.data?.architecture || '',
+                'remnanode'
+            ))
+            .map((release) => ({
+                value: release.tag_name,
+                label: `${release.tag_name} · ${release.prerelease ? 'Pre-release' : 'Release'}`
+            })),
+        [nodeReleases, nodeUpdatesQuery.data?.architecture, nodeUpdatesQuery.data?.os]
+    )
+    const coreOptions = useMemo(
+        () => coreReleases
+            .filter((release) => getCompatibleAsset(
+                release,
+                coreUpdatesQuery.data?.os || 'linux',
+                coreUpdatesQuery.data?.architecture || '',
+                'rw-core'
+            ))
+            .map((release) => ({
+                value: release.tag_name,
+                label: `${release.tag_name} · ${release.prerelease ? 'Pre-release' : 'Release'}`
+            })),
+        [coreReleases, coreUpdatesQuery.data?.architecture, coreUpdatesQuery.data?.os]
+    )
+
+    const latestNodeStable = nodeReleases.find((release) =>
+        !release.prerelease && getCompatibleAsset(
+            release,
+            nodeUpdatesQuery.data?.os || 'linux',
+            nodeUpdatesQuery.data?.architecture || '',
+            'remnanode'
+        )
+    )
+    const latestNodePrerelease = nodeReleases.find((release) =>
+        release.prerelease && getCompatibleAsset(
+            release,
+            nodeUpdatesQuery.data?.os || 'linux',
+            nodeUpdatesQuery.data?.architecture || '',
+            'remnanode'
+        )
+    )
+    const latestCoreStable = coreReleases.find((release) =>
+        !release.prerelease && getCompatibleAsset(
+            release,
+            coreUpdatesQuery.data?.os || 'linux',
+            coreUpdatesQuery.data?.architecture || '',
+            'rw-core'
+        )
+    )
+    const latestCorePrerelease = coreReleases.find((release) =>
+        release.prerelease && getCompatibleAsset(
+            release,
+            coreUpdatesQuery.data?.os || 'linux',
+            coreUpdatesQuery.data?.architecture || '',
+            'rw-core'
+        )
+    )
+
+    const nodeTargetVersion = nodeChannel === 'version'
+        ? selectedNodeVersion || ''
+        : (nodeChannel === 'stable' ? latestNodeStable?.tag_name : latestNodePrerelease?.tag_name) || ''
+    const coreTargetVersion = coreChannel === 'version'
+        ? selectedCoreVersion || ''
+        : (coreChannel === 'stable' ? latestCoreStable?.tag_name : latestCorePrerelease?.tag_name) || ''
+
     const applyMutation = useMutation({
         mutationFn: async () => {
-            let targetVer = selectedVersion
-            if (channel === 'stable' && updateInfo?.latestRelease) {
-                targetVer = updateInfo.latestRelease.tag_name
-            } else if (channel === 'prerelease') {
-                targetVer = updateInfo?.latestPrerelease?.tag_name || 'v3.5.0-beta.1'
-            } else if (channel === 'manual' || selectedVersion === 'manual') {
-                targetVer = manualVersion
-            }
-
-            if (isCustomCoreEnabled) {
-                await instance.post(`/api/nodes/${node.uuid}/updates/apply` as any, {
-                    type: 'core',
-                    repo: customCoreRepo,
-                    version: customCoreVersion
+            if (activeTab === 'node') {
+                if (!nodeTargetVersion) throw new Error('Нет подходящего релиза Remnanode для этой архитектуры.')
+                const res = await instance.post(`/api/nodes/${node.uuid}/updates/apply` as any, {
+                    type: 'node',
+                    repo: NODE_REPOSITORY,
+                    version: nodeTargetVersion
                 })
+                return res.data
             }
 
+            const downloadUrl = coreDownloadUrl.trim()
+            if (downloadUrl) {
+                if (!downloadUrl.startsWith('https://')) {
+                    throw new Error('Ссылка должна начинаться с https://')
+                }
+                const res = await instance.post(`/api/nodes/${node.uuid}/updates/apply` as any, {
+                    type: 'core',
+                    downloadUrl
+                })
+                return res.data
+            }
+
+            if (!coreTargetVersion) throw new Error('Нет подходящего релиза Xray для этой архитектуры.')
             const res = await instance.post(`/api/nodes/${node.uuid}/updates/apply` as any, {
-                type: 'node',
-                repo: nodeRepo,
-                version: targetVer
+                type: 'core',
+                repo: XRAY_REPOSITORY,
+                version: coreTargetVersion
             })
             return res.data
-        },
-        onSuccess: () => {
-            setTimeout(() => {
-                hide()
-            }, 1500)
         }
     })
 
-    const effectiveTargetVer =
-        channel === 'stable'
-            ? updateInfo?.latestRelease?.tag_name || 'Latest Stable'
-            : channel === 'prerelease'
-              ? updateInfo?.latestPrerelease?.tag_name || 'v3.5.0-beta.1 (Pre-release)'
-              : channel === 'manual' || selectedVersion === 'manual'
-                ? manualVersion || 'Ввести версию'
-                : selectedVersion || 'Выбрать'
+    const isLoading = activeTab === 'node'
+        ? nodeUpdatesQuery.isLoading
+        : coreUpdatesQuery.isLoading
+    const updateInfo = activeTab === 'node' ? nodeUpdatesQuery.data : coreUpdatesQuery.data
+    const queryError = activeTab === 'node'
+        ? nodeUpdatesQuery.error || updateInfo?.error
+        : coreUpdatesQuery.error || updateInfo?.error
+    const targetVersion = activeTab === 'node'
+        ? nodeTargetVersion
+        : coreDownloadUrl.trim() ? 'По ссылке' : coreTargetVersion
+    const canUpdate = activeTab === 'node'
+        ? Boolean(nodeTargetVersion)
+        : Boolean(coreDownloadUrl.trim() || coreTargetVersion)
 
-    const allReleases = updateInfo?.allReleases || []
-    const prereleasesFromApi = allReleases.filter(
-        (r) =>
-            r.prerelease ||
-            r.tag_name.toLowerCase().includes('beta') ||
-            r.tag_name.toLowerCase().includes('rc') ||
-            r.tag_name.toLowerCase().includes('pre') ||
-            r.tag_name.toLowerCase().includes('alpha') ||
-            r.tag_name.toLowerCase().includes('dev')
+    const releaseSelector = (
+        channel: ReleaseChannel,
+        setChannel: (value: ReleaseChannel) => void,
+        selectedVersion: string | null,
+        setSelectedVersion: (value: string | null) => void,
+        options: { value: string; label: string }[],
+        targetVersion: string,
+        versionLabel: string
+    ) => (
+        <Stack gap="xs">
+            <Select
+                data={[
+                    { value: 'stable', label: `Последний Release${channel === 'stable' && targetVersion ? ` · ${targetVersion}` : ''}` },
+                    { value: 'prerelease', label: `Последний Pre-release${channel === 'prerelease' && targetVersion ? ` · ${targetVersion}` : ''}` },
+                    { value: 'version', label: 'Выбрать конкретную версию…' }
+                ]}
+                label="Канал релиза"
+                onChange={(value) => {
+                    setChannel((value as ReleaseChannel) || 'stable')
+                    setConfirmed(false)
+                    applyMutation.reset()
+                }}
+                value={channel}
+            />
+            {channel === 'version' && (
+                <Select
+                    data={options}
+                    label={versionLabel}
+                    onChange={(value) => {
+                        setSelectedVersion(value)
+                        setConfirmed(false)
+                        applyMutation.reset()
+                    }}
+                    placeholder="Выберите release или pre-release"
+                    searchable
+                    value={selectedVersion}
+                />
+            )}
+        </Stack>
     )
-
-    const prereleaseOptions =
-        prereleasesFromApi.length > 0
-            ? prereleasesFromApi.map((r) => ({
-                  value: r.tag_name,
-                  label: `${r.tag_name} (Pre-release)`
-              }))
-            : [
-                  { value: 'v3.5.0-rc.1', label: 'v3.5.0-rc.1 (Pre-release)' },
-                  { value: 'v3.5.0-beta.1', label: 'v3.5.0-beta.1 (Pre-release)' }
-              ]
-
-    const stableReleases = allReleases
-        .filter(
-            (r) =>
-                !r.prerelease &&
-                !r.tag_name.toLowerCase().includes('beta') &&
-                !r.tag_name.toLowerCase().includes('rc') &&
-                !r.tag_name.toLowerCase().includes('pre') &&
-                !r.tag_name.toLowerCase().includes('alpha') &&
-                !r.tag_name.toLowerCase().includes('dev')
-        )
-        .map((r) => ({
-            value: r.tag_name,
-            label: `${r.tag_name} (Release)`
-        }))
-
-    const releaseOptions = [
-        {
-            group: 'Pre-release',
-            items: prereleaseOptions
-        },
-        {
-            group: 'Release',
-            items: stableReleases
-        },
-        {
-            group: 'Другое',
-            items: [{ value: 'manual', label: '✏️ Ввести другую версию вручную...' }]
-        }
-    ]
 
     return (
         <Modal
@@ -197,7 +332,7 @@ export const UpdateNodeModal = NiceModal.create((props: IProps) => {
                     IconComponent={TbCloudDownload}
                     iconVariant="soft"
                     subtitle={node.name}
-                    title="Обновление Remnanode"
+                    title="Управление версиями ноды"
                 />
             }
         >
@@ -206,179 +341,150 @@ export const UpdateNodeModal = NiceModal.create((props: IProps) => {
                     color="orange"
                     icon={<TbAlertTriangle size={20} />}
                     radius="md"
-                    title="Внимание"
+                    title="Перезапуск службы"
                     variant="light"
                 >
-                    Обновление бинарника приведет к перезапуску службы Remnanode. Активные соединения пользователей будут кратковременно сброшены.
+                    Установка Remnanode или Xray перезапустит службу. Активные соединения кратковременно прервутся.
                 </Alert>
+
+                <Tabs
+                    onChange={(value) => {
+                        setActiveTab((value as 'node' | 'core') || 'node')
+                        setConfirmed(false)
+                        applyMutation.reset()
+                    }}
+                    value={activeTab}
+                >
+                    <Tabs.List grow>
+                        <Tabs.Tab value="node">Remnanode Go</Tabs.Tab>
+                        <Tabs.Tab leftSection={<TbCpu size={16} />} value="core">Xray Core</Tabs.Tab>
+                    </Tabs.List>
+                </Tabs>
 
                 {isLoading ? (
                     <Group justify="center" p="xl">
                         <Loader color="blue" size="sm" />
-                        <Text c="dimmed" size="xs">
-                            Проверка доступных релизов...
-                        </Text>
+                        <Text c="dimmed" size="xs">Загрузка списка релизов…</Text>
                     </Group>
                 ) : (
                     <>
+                        {queryError && (
+                            <Alert color="red" title="Не удалось получить релизы" variant="light">
+                                {typeof queryError === 'string' ? queryError : getErrorMessage(queryError)}
+                            </Alert>
+                        )}
+
                         <Group justify="space-between">
                             <Group gap="xs">
-                                <Text fw={500} size="sm">
-                                    Текущая версия:
-                                </Text>
+                                <Text fw={500} size="sm">Установлено:</Text>
                                 <Badge color="gray" size="md" variant="light">
-                                    v{updateInfo?.currentVersion || '3.4.15'}
-                                </Badge>
-                                <Badge color="dark" size="sm" variant="outline">
-                                    {updateInfo?.os}/{updateInfo?.architecture}
-                                </Badge>
-                            </Group>
-
-                            <Group gap="xs">
-                                <Text c="dimmed" size="xs">
-                                    Xray Core:
-                                </Text>
-                                <Badge color="teal" size="sm" variant="light">
-                                    {updateInfo?.currentCoreVersion || 'v26.3.27'}
+                                    {activeTab === 'node'
+                                        ? updateInfo?.currentVersion || 'не получена'
+                                        : updateInfo?.currentCoreVersion || node.versions?.xray || 'не получена'}
                                 </Badge>
                             </Group>
+                            <Badge color="dark" size="sm" variant="outline">
+                                {updateInfo?.os || 'linux'}/{updateInfo?.architecture || '—'}
+                            </Badge>
                         </Group>
 
                         <Divider opacity={0.4} />
 
-                        <Stack gap="xs">
-                            <Text fw={600} size="sm">
-                                Выберите версию для установки:
-                            </Text>
+                        {activeTab === 'node' ? (
+                            <Stack gap="sm">
+                                <Text fw={600} size="sm">Выберите релиз Remnanode Go</Text>
+                                {releaseSelector(
+                                    nodeChannel,
+                                    setNodeChannel,
+                                    selectedNodeVersion,
+                                    setSelectedNodeVersion,
+                                    nodeOptions,
+                                    nodeTargetVersion,
+                                    'Релиз Remnanode Go'
+                                )}
+                            </Stack>
+                        ) : (
+                            <Stack gap="sm">
+                                <Text fw={600} size="sm">Выберите официальный релиз Xray Core</Text>
+                                {releaseSelector(
+                                    coreChannel,
+                                    setCoreChannel,
+                                    selectedCoreVersion,
+                                    setSelectedCoreVersion,
+                                    coreOptions,
+                                    coreTargetVersion,
+                                    'Релиз Xray Core'
+                                )}
 
-                            <Select
-                                data={[
-                                    {
-                                        value: 'stable',
-                                        label: `Стабильный релиз (${updateInfo?.latestRelease?.tag_name || 'v3.4.2'})`
-                                    },
-                                    {
-                                        value: 'prerelease',
-                                        label: `Pre-release / Beta (${updateInfo?.latestPrerelease?.tag_name || 'v3.5.0-beta.1'})`
-                                    },
-                                    { value: 'custom', label: 'Выбрать конкретную версию из списка...' },
-                                    { value: 'manual', label: 'Ввести версию вручную...' }
-                                ]}
-                                onChange={(val) => setChannel((val as 'stable' | 'prerelease' | 'custom' | 'manual') || 'stable')}
-                                value={channel}
-                            />
-
-                            {channel === 'custom' && (
-                                <Select
-                                    data={releaseOptions}
-                                    label="Список релизов (Release & Pre-release)"
-                                    onChange={(val) => setSelectedVersion(val || '')}
-                                    placeholder="Выберите версию..."
-                                    value={selectedVersion}
-                                />
-                            )}
-
-                            {(channel === 'manual' || selectedVersion === 'manual') && (
                                 <TextInput
-                                    description="Введите тег релиза (например: v3.5.0-beta.1 или 3.4.16)"
-                                    label="Указать версию вручную"
-                                    onChange={(e) => setManualVersion(e.currentTarget.value)}
-                                    placeholder="v3.5.0-beta.1"
-                                    value={manualVersion}
+                                    description="Если ссылка указана, она имеет приоритет над выбранным релизом. Поддерживается прямой бинарник, ZIP или TAR.GZ."
+                                    label="Прямая HTTPS-ссылка на ядро"
+                                    onChange={(event) => {
+                                        setCoreDownloadUrl(event.currentTarget.value)
+                                        setConfirmed(false)
+                                        applyMutation.reset()
+                                    }}
+                                    placeholder="https://example.org/Xray-linux-64.zip"
+                                    value={coreDownloadUrl}
                                 />
-                            )}
+                            </Stack>
+                        )}
 
-                            <Group gap="xs" mt="xs">
-                                <Text c="dimmed" size="xs">
-                                    Переход:
-                                </Text>
-                                <Badge color="gray" size="sm" variant="outline">
-                                    v{updateInfo?.currentVersion || 'Текущая'}
-                                </Badge>
-                                <TbArrowRight size={14} />
-                                <Badge
-                                    color={effectiveTargetVer.includes('beta') || effectiveTargetVer.includes('rc') || effectiveTargetVer.includes('Pre-release') ? 'orange' : 'blue'}
-                                    size="sm"
-                                    variant="filled"
-                                >
-                                    {effectiveTargetVer}
-                                </Badge>
-                            </Group>
-                        </Stack>
-
-                        <Divider opacity={0.4} />
-
-                        <Box>
-                            <Group justify="space-between">
-                                <Group gap="xs">
-                                    <TbCpu size={18} />
-                                    <Text fw={500} size="sm">
-                                        Кастомное ядро Xray (для энтузиастов)
-                                    </Text>
-                                </Group>
-                                <Switch
-                                    checked={isCustomCoreEnabled}
-                                    onChange={(e) => setIsCustomCoreEnabled(e.currentTarget.checked)}
-                                    size="sm"
-                                />
-                            </Group>
-
-                            {isCustomCoreEnabled && (
-                                <Stack gap="xs" mt="sm">
-                                    <Text c="dimmed" size="xs">
-                                        Позволяет установить кастомное ядро Xray (форк или тестовый билд) напрямую из GitHub репозитория.
-                                    </Text>
-                                    <TextInput
-                                        description="Репозиторий GitHub для загрузки Xray ядра"
-                                        label="GitHub Репозиторий ядра"
-                                        onChange={(e) => setCustomCoreRepo(e.currentTarget.value)}
-                                        value={customCoreRepo}
-                                    />
-                                    <TextInput
-                                        description="Оставьте пустым для последнего стабильного релиза"
-                                        label="Версия ядра (тег)"
-                                        onChange={(e) => setCustomCoreVersion(e.currentTarget.value)}
-                                        placeholder="v26.3.27"
-                                        value={customCoreVersion}
-                                    />
-                                </Stack>
-                            )}
-                        </Box>
+                        <Group gap="xs">
+                            <Text c="dimmed" size="xs">Установка:</Text>
+                            <Badge color="gray" size="sm" variant="outline">
+                                {activeTab === 'node'
+                                    ? updateInfo?.currentVersion || 'текущая версия'
+                                    : updateInfo?.currentCoreVersion || node.versions?.xray || 'текущая версия'}
+                            </Badge>
+                            <TbArrowRight size={14} />
+                            <Badge color={targetVersion ? 'blue' : 'gray'} size="sm" variant="filled">
+                                {targetVersion || 'выберите релиз'}
+                            </Badge>
+                        </Group>
 
                         <Divider opacity={0.4} />
 
                         <Checkbox
                             checked={confirmed}
                             color="orange"
-                            label="Я подтверждаю обновление и перезапуск Remnanode"
-                            onChange={(e) => setConfirmed(e.currentTarget.checked)}
+                            label={`Подтверждаю установку ${activeTab === 'node' ? 'Remnanode Go' : 'Xray Core'} и перезапуск службы`}
+                            onChange={(event) => setConfirmed(event.currentTarget.checked)}
                             size="sm"
                         />
 
                         {applyMutation.isSuccess && (
-                            <Alert color="teal" icon={<TbCheck size={18} />} title="Успешно">
-                                Запрос на обновление отправлен. Служба перезапускается.
+                            <Alert color="teal" icon={<TbCheck size={18} />} title="Запрос принят">
+                                {activeTab === 'node'
+                                    ? `Remnanode обновляется до ${nodeTargetVersion}.`
+                                    : `Xray Core обновляется${coreDownloadUrl.trim() ? ' по указанной ссылке' : ` до ${coreTargetVersion}`}.`}
+                                {' '}Служба перезапускается.
+                            </Alert>
+                        )}
+                        {applyMutation.isError && (
+                            <Alert color="red" title="Обновление не выполнено" variant="light">
+                                {getErrorMessage(applyMutation.error)}
                             </Alert>
                         )}
 
                         <Group justify="flex-end" mt="sm">
-                            <Button
-                                disabled={applyMutation.isPending}
-                                onClick={hide}
-                                size="sm"
-                                variant="subtle"
-                            >
-                                Отмена
+                            <Button disabled={applyMutation.isPending} onClick={hide} size="sm" variant="subtle">
+                                Закрыть
                             </Button>
                             <Button
                                 color="orange"
-                                disabled={!confirmed || applyMutation.isPending}
+                                disabled={
+                                    !confirmed ||
+                                    !canUpdate ||
+                                    applyMutation.isPending ||
+                                    Boolean(queryError && (activeTab === 'node' || !coreDownloadUrl.trim()))
+                                }
                                 leftSection={<TbCloudDownload size={16} />}
                                 loading={applyMutation.isPending}
                                 onClick={() => applyMutation.mutate()}
                                 size="sm"
                             >
-                                {applyMutation.isPending ? 'Обновление...' : 'Обновить сейчас'}
+                                {applyMutation.isPending ? 'Установка…' : 'Установить сейчас'}
                             </Button>
                         </Group>
                     </>
