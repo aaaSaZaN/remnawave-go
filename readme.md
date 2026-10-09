@@ -387,24 +387,54 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o gowave-linux-
 
 ---
 
+## Миграция базы данных (PasarGuard и Remnawave)
+
+Gowave поддерживает быстрый перенос данных в один клик без запуска панели:
+
+### 1. Переезд с PasarGuard (в SQLite или PostgreSQL)
+```bash
+# Автоматический поиск и импорт базы PasarGuard
+gowave import pasarguard
+
+# Или с явным указанием пути к файлу/DSN:
+gowave import pasarguard /opt/pasarguard/data/db.sqlite3
+```
+* Переносит всех пользователей, VLESS UUID, пароли Trojan / Shadowsocks / Hysteria, лимиты трафика, стратегии сброса, заметки и привязки устройств по HWID.
+* Автоматически привязывает пользователей к дефолтному скваду нод.
+
+### 2. Переезд с Remnawave (Docker PostgreSQL ➔ Gowave SQLite)
+Если вы хотите избавиться от тяжелого Docker и перейти на легкий одиночный файл SQLite:
+```bash
+# Перенос данных из PostgreSQL в автономный remnawave.db
+gowave migrate pg-to-sqlite
+```
+* Автоматически находит настройки подключения к PostgreSQL старой Remnawave (`/opt/remnawave/.env`).
+* Переносит все таблицы без потерь (пользователей, трафик, ноды, хосты, reality-шаблоны, сквады).
+* Сам переключает `.env` на `DB_DRIVER=sqlite` (сохраняя бэкап `.env.bak`).
+* При использовании интерактивного меню (`gowave rescue`) вежливо предложит остановить и удалить старые Docker-контейнеры (`remnawave`, `remnawave-db`, `remnawave-redis`), освободив оперативку и диск (строго по подтверждению `y`).
+
+---
+
 ## Утилиты и CLI команды (Rescue Mode)
 
-В бинарник Gowave встроен режим аварийного восстановления и управления:
+При первом запуске бинарник сам регистрирует глобальную команду `gowave` в системе (`/usr/local/bin/gowave`), поэтому команды можно вызывать из любой папки.
 
 ```bash
-# Интерактивное меню управления
-./gowave-server rescue
+# Интерактивное меню управления и миграций
+gowave rescue
 ```
 
-Флаги прямого вызова:
+Команды прямого вызова:
 
 | Команда | Описание |
 | :--- | :--- |
-| `./gowave-server rescue --reset-admin` | Удаляет администраторов для повторного прохождения первичной настройки в браузере |
-| `./gowave-server rescue --list-admins` | Выводит список всех зарегистрированных администраторов |
-| `./gowave-server rescue --enable-password-auth` | Принудительно включает аутентификацию по логину/паролю в БД |
-| `./gowave-server rescue --print-secret-key` | Генерирует и выводит валидный `SECRET_KEY` для нод |
-| `./gowave-server rescue --help` | Справка по всем доступным флагам |
+| `gowave import pasarguard [path]` | Быстрый импорт данных из PasarGuard |
+| `gowave migrate pg-to-sqlite [dsn]` | Перенос данных из Remnawave PostgreSQL в Gowave SQLite |
+| `gowave rescue --reset-admin` | Удаляет администраторов для повторного прохождения первичной настройки в браузере |
+| `gowave rescue --list-admins` | Выводит список всех зарегистрированных администраторов |
+| `gowave rescue --enable-password-auth` | Принудительно включает аутентификацию по логину/паролю в БД |
+| `gowave rescue --print-secret-key` | Генерирует и выводит валидный `SECRET_KEY` для нод |
+| `gowave rescue --help` | Справка по всем доступным флагам |
 
 ---
 

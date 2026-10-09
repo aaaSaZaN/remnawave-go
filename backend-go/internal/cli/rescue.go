@@ -55,6 +55,30 @@ func RunRescue(db *gorm.DB, cfg *config.Config, args []string) {
 				os.Exit(1)
 			}
 			return
+		case "--migrate-pg-to-sqlite", "migrate-pg-to-sqlite":
+			dsn := ""
+			if len(args) > 1 {
+				dsn = args[1]
+			}
+			if err := MigratePostgresToSQLite(cfg, dsn, "remnawave.db"); err != nil {
+				fmt.Printf("[-] Migration failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "migrate":
+			dsn := ""
+			if len(args) > 1 && (args[1] == "pg-to-sqlite" || args[1] == "postgres-to-sqlite") {
+				if len(args) > 2 {
+					dsn = args[2]
+				}
+			} else if len(args) > 1 {
+				dsn = args[1]
+			}
+			if err := MigratePostgresToSQLite(cfg, dsn, "remnawave.db"); err != nil {
+				fmt.Printf("[-] Migration failed: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		case "--help", "-h":
 			printUsage()
 			return
@@ -77,15 +101,18 @@ func PrintNodeSecretKey(db *gorm.DB) {
 func printUsage() {
 	fmt.Println("Usage: remnawave-server rescue [flag]")
 	fmt.Println("       remnawave-server import pasarguard [path/dsn]")
+	fmt.Println("       remnawave-server migrate pg-to-sqlite [dsn]")
 	fmt.Println("       remnawave-server cli [flag]")
 	fmt.Println("\nAvailable commands / flags:")
-	fmt.Println("  --import-pasarguard [path]  Import users, traffic and HWIDs from PasarGuard (SQLite or Postgres)")
-	fmt.Println("  import pasarguard [path]    Import users, traffic and HWIDs from PasarGuard")
-	fmt.Println("  --reset-admin               Remove all admins to re-trigger first-time web onboarding")
-	fmt.Println("  --list-admins               List all existing administrators")
-	fmt.Println("  --enable-password-auth      Force-enable password authentication in database")
-	fmt.Println("  --print-secret-key          Generate and print a valid SECRET_KEY for remnanode")
-	fmt.Println("  --help, -h                  Show this help message")
+	fmt.Println("  --import-pasarguard [path]       Import users, traffic and HWIDs from PasarGuard (SQLite or Postgres)")
+	fmt.Println("  import pasarguard [path]         Import users, traffic and HWIDs from PasarGuard")
+	fmt.Println("  --migrate-pg-to-sqlite [dsn]     Migrate from Remnawave PostgreSQL to standalone SQLite")
+	fmt.Println("  migrate pg-to-sqlite [dsn]       Migrate from Remnawave PostgreSQL to standalone SQLite")
+	fmt.Println("  --reset-admin                   Remove all admins to re-trigger first-time web onboarding")
+	fmt.Println("  --list-admins                   List all existing administrators")
+	fmt.Println("  --enable-password-auth          Force-enable password authentication in database")
+	fmt.Println("  --print-secret-key              Generate and print a valid SECRET_KEY for remnanode")
+	fmt.Println("  --help, -h                      Show this help message")
 	fmt.Println("\nRun without flags to start the interactive rescue menu.")
 }
 
@@ -102,8 +129,9 @@ func interactiveMenu(db *gorm.DB, cfg *config.Config) {
 		fmt.Println("5) Enable username/password authentication")
 		fmt.Println("6) Print node SECRET_KEY")
 		fmt.Println("7) Import database from PasarGuard (SQLite/PostgreSQL)")
+		fmt.Println("8) Migrate from Remnawave PostgreSQL -> Gowave SQLite (and purge Docker)")
 		fmt.Println("0) Exit")
-		fmt.Print("\nSelect an option [0-7]: ")
+		fmt.Print("\nSelect an option [0-8]: ")
 
 		input, err := reader.ReadString('\n')
 		if err != nil {
@@ -126,11 +154,13 @@ func interactiveMenu(db *gorm.DB, cfg *config.Config) {
 			PrintNodeSecretKey(db)
 		case "7":
 			ImportPasarGuardInteractive(db, reader)
+		case "8":
+			MigratePGToSQLiteInteractive(cfg, reader)
 		case "0", "q", "exit":
 			fmt.Println("Exiting Rescue CLI.")
 			return
 		default:
-			fmt.Println("Invalid option, please choose between 0 and 7.")
+			fmt.Println("Invalid option, please choose between 0 and 8.")
 		}
 	}
 }

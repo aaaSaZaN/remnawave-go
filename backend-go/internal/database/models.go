@@ -1,8 +1,96 @@
 package database
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 )
+
+type StringArray []string
+
+func (a StringArray) Value() (driver.Value, error) {
+	if len(a) == 0 {
+		return "{}", nil
+	}
+	var elements []string
+	for _, s := range a {
+		s = strings.ReplaceAll(s, "\\", "\\\\")
+		s = strings.ReplaceAll(s, "\"", "\\\"")
+		elements = append(elements, "\"" + s + "\"")
+	}
+	return "{" + strings.Join(elements, ",") + "}", nil
+}
+
+func (a *StringArray) Scan(src interface{}) error {
+	if src == nil {
+		*a = []string{}
+		return nil
+	}
+	var str string
+	switch v := src.(type) {
+	case string:
+		str = v
+	case []byte:
+		str = string(v)
+	default:
+		return fmt.Errorf("unsupported type for StringArray: %T", src)
+	}
+
+	str = strings.TrimSpace(str)
+	if str == "" || str == "{}" || str == "[]" {
+		*a = []string{}
+		return nil
+	}
+
+	if strings.HasPrefix(str, "[") && strings.HasSuffix(str, "]") {
+		var list []string
+		if err := json.Unmarshal([]byte(str), &list); err == nil {
+			*a = list
+			return nil
+		}
+	}
+
+	if strings.HasPrefix(str, "{") && strings.HasSuffix(str, "}") {
+		inner := str[1 : len(str)-1]
+		if inner == "" {
+			*a = []string{}
+			return nil
+		}
+		var res []string
+		var cur strings.Builder
+		inQuotes := false
+		escaped := false
+		for _, r := range inner {
+			if escaped {
+				cur.WriteRune(r)
+				escaped = false
+				continue
+			}
+			if r == '\\' {
+				escaped = true
+				continue
+			}
+			if r == '"' {
+				inQuotes = !inQuotes
+				continue
+			}
+			if r == ',' && !inQuotes {
+				res = append(res, cur.String())
+				cur.Reset()
+				continue
+			}
+			cur.WriteRune(r)
+		}
+		res = append(res, cur.String())
+		*a = res
+		return nil
+	}
+
+	*a = []string{str}
+	return nil
+}
 
 type Admin struct {
 	UUID         string    `gorm:"primaryKey;type:varchar(64)" json:"uuid"`
@@ -80,8 +168,8 @@ type Node struct {
 	ViewPosition              int        `gorm:"default:1" json:"viewPosition"`
 	ConsumptionMultiplier     int64      `gorm:"default:1000000000" json:"consumptionMultiplier"`
 	NodeConsumptionMultiplier int64      `gorm:"default:1000000000" json:"nodeConsumptionMultiplier"`
-	Tags                      string     `gorm:"type:text;default:'[]'"`
-	IntegrationUUIDs          string     `gorm:"type:text;default:'[]'"`
+	Tags                      StringArray `gorm:"type:text[];default:'{}'"`
+	IntegrationUUIDs          StringArray `gorm:"type:uuid[];default:'{}'"`
 	IPs                       string     `gorm:"type:text;default:'[]'"`
 	ActiveConfigProfileUUID   *string    `gorm:"type:varchar(64)" json:"activeConfigProfileUuid"`
 	ProviderUUID              *string    `gorm:"type:varchar(64)" json:"providerUuid"`

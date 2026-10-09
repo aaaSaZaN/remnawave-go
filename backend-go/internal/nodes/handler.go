@@ -48,18 +48,12 @@ type UpdateNodeDTO struct {
 
 func formatNodeResponse(service *Service, n *database.Node) map[string]interface{} {
 	db := service.DB()
-	tags := []string{}
-	if n.Tags != "" {
-		_ = json.Unmarshal([]byte(n.Tags), &tags)
-	}
+	tags := []string(n.Tags)
 	if tags == nil {
 		tags = []string{}
 	}
 
-	integrationUuids := []string{}
-	if n.IntegrationUUIDs != "" {
-		_ = json.Unmarshal([]byte(n.IntegrationUUIDs), &integrationUuids)
-	}
+	integrationUuids := []string(n.IntegrationUUIDs)
 	if integrationUuids == nil {
 		integrationUuids = []string{}
 	}
@@ -236,15 +230,10 @@ func (h *Handler) GetTags(w http.ResponseWriter, r *http.Request) {
 	nodesList, _ := h.service.GetAll()
 	tagSet := make(map[string]bool)
 	for _, n := range nodesList {
-		if n.Tags != "" {
-			var nTags []string
-			if err := json.Unmarshal([]byte(n.Tags), &nTags); err == nil {
-				for _, t := range nTags {
-					if t != "" && !tagSet[t] {
-						tagSet[t] = true
-						tags = append(tags, t)
-					}
-				}
+		for _, t := range n.Tags {
+			if t != "" && !tagSet[t] {
+				tagSet[t] = true
+				tags = append(tags, t)
 			}
 		}
 	}
@@ -362,12 +351,10 @@ func (h *Handler) handleUpdateNode(w http.ResponseWriter, r *http.Request, targe
 		updates["note"] = dto.Note
 	}
 	if dto.Tags != nil {
-		b, _ := json.Marshal(*dto.Tags)
-		updates["tags"] = string(b)
+		updates["tags"] = database.StringArray(*dto.Tags)
 	}
 	if dto.IntegrationUUIDs != nil {
-		b, _ := json.Marshal(*dto.IntegrationUUIDs)
-		updates["integration_uuids"] = string(b)
+		updates["integration_uuids"] = database.StringArray(*dto.IntegrationUUIDs)
 	}
 	if dto.IPs != nil {
 		b, _ := json.Marshal(*dto.IPs)
