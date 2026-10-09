@@ -156,7 +156,7 @@ func (UserTraffic) TableName() string {
 
 type Node struct {
 	ID                        uint64         `gorm:"uniqueIndex;autoIncrement" json:"id"`
-	UUID                      string         `gorm:"primaryKey;type:varchar(64)" json:"uuid"`
+	UUID                      string         `gorm:"primaryKey;uniqueIndex;type:varchar(64)" json:"uuid"`
 	Name                      string         `gorm:"uniqueIndex;type:varchar(64)" json:"name"`
 	Address                   string         `gorm:"uniqueIndex;type:varchar(255)" json:"address"`
 	Port                      *int           `gorm:"default:443" json:"port"`
