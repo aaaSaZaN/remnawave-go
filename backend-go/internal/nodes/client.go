@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"remnawave-go/internal/database"
@@ -160,19 +161,28 @@ func getNodePort(node *database.Node) int {
 	return 443
 }
 
-func (c *Client) CheckHealth(node *database.Node) (bool, string, error) {
+type NodeHealthCheckResult struct {
+	IsAlive      bool
+	StatusMsg    string
+	XrayVersion  string
+	NodeVersion  string
+	NodeType     string
+	IsCustomCore bool
+}
+
+func (c *Client) CheckHealth(node *database.Node) (NodeHealthCheckResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	// Remnanode/TS endpoint is /node/xray/healthcheck
 	url := fmt.Sprintf("https://%s:%d/node/xray/healthcheck", node.Address, getNodePort(node))
 	resp, err := c.doRequest(ctx, "GET", url, nil)
 	if err != nil {
-		return false, err.Error(), err
+		return NodeHealthCheckResult{IsAlive: false, StatusMsg: err.Error()}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Sprintf("Node returned status %d", resp.StatusCode), nil
+		return NodeHealthCheckResult{IsAlive: false, StatusMsg: fmt.Sprintf("Node returned status %d", resp.StatusCode)}, nil
 	}
 
 	var res struct {
@@ -181,11 +191,55 @@ func (c *Client) CheckHealth(node *database.Node) (bool, string, error) {
 			XrayInternalStatusCached bool    `json:"xrayInternalStatusCached"`
 			XrayVersion              *string `json:"xrayVersion"`
 			NodeVersion              string  `json:"nodeVersion"`
+			NodeType                 string  `json:"nodeType"`
+			IsCustomCore             bool    `json:"isCustomCore"`
 		} `json:"response"`
 	}
 	_ = json.NewDecoder(resp.Body).Decode(&res)
 
-	return res.Response.IsAlive, "OK", nil
+	alive := res.Response.IsAlive && res.Response.XrayInternalStatusCached
+	msg := "OK"
+	if !res.Response.XrayInternalStatusCached {
+		alive = false
+		msg = "Xray core is stopped"
+	}
+
+	xrayVer := ""
+	if res.Response.XrayVersion != nil {
+		xrayVer = *res.Response.XrayVersion
+	}
+
+	nodeType := strings.ToLower(res.Response.NodeType)
+	if nodeType == "" {
+		nodeType = "ts"
+	}
+
+	isCustom := res.Response.IsCustomCore
+	if strings.Contains(strings.ToLower(xrayVer), "custom") || strings.Contains(strings.ToLower(xrayVer), "mod") {
+		isCustom = true
+	}
+
+	return NodeHealthCheckResult{
+		IsAlive:      alive,
+		StatusMsg:    msg,
+		XrayVersion:  xrayVer,
+		NodeVersion:  res.Response.NodeVersion,
+		NodeType:     nodeType,
+		IsCustomCore: isCustom,
+	}, nil
+}
+
+func (c *Client) SyncPlugin(node *database.Node, payload map[string]interface{}) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("https://%s:%d/node/plugin/sync", node.Address, getNodePort(node))
+	resp, err := c.doRequest(ctx, "POST", url, payload)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode == http.StatusOK, nil
 }
 
 func (c *Client) StartXray(node *database.Node, payload map[string]interface{}) (bool, error) {
@@ -399,6 +453,18 @@ type NodeSystemStatsResponse struct {
 		Alloc        int64 `json:"alloc"`
 	} `json:"xrayInfo"`
 	System *struct {
+		Info *struct {
+			Arch              string   `json:"arch"`
+			CPUs              int      `json:"cpus"`
+			CPUModel          string   `json:"cpuModel"`
+			MemoryTotal       uint64   `json:"memoryTotal"`
+			Hostname          string   `json:"hostname"`
+			Platform          string   `json:"platform"`
+			Release           string   `json:"release"`
+			Type              string   `json:"type"`
+			Version           string   `json:"version"`
+			NetworkInterfaces []string `json:"networkInterfaces"`
+		} `json:"info"`
 		Stats *struct {
 			MemoryFree uint64    `json:"memoryFree"`
 			MemoryUsed uint64    `json:"memoryUsed"`
@@ -462,6 +528,42 @@ func (c *Client) GetUsersStats(node *database.Node, reset bool) ([]NodeUserTraff
 	}
 	return res.Response.Users, nil
 }
+
+type NodeTrafficEntry struct {
+	Inbound  string `json:"inbound,omitempty"`
+	Outbound string `json:"outbound,omitempty"`
+	Downlink int64  `json:"downlink"`
+	Uplink   int64  `json:"uplink"`
+}
+
+type NodeCombinedStatsResponse struct {
+	Inbounds  []NodeTrafficEntry `json:"inbounds"`
+	Outbounds []NodeTrafficEntry `json:"outbounds"`
+}
+
+func (c *Client) GetCombinedStats(node *database.Node, reset bool) (*NodeCombinedStatsResponse, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	url := fmt.Sprintf("https://%s:%d/node/stats/get-combined-stats", node.Address, getNodePort(node))
+	resp, err := c.doRequest(ctx, "POST", url, map[string]bool{"reset": reset})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("node returned status %d", resp.StatusCode)
+	}
+
+	var res struct {
+		Response NodeCombinedStatsResponse `json:"response"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	return &res.Response, nil
+}
+
 
 type NodeUserInboundData struct {
 	Type       string  `json:"type"`

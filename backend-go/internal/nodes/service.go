@@ -41,8 +41,10 @@ type NodeHotMetrics struct {
 }
 
 type NodeVersionsResponse struct {
-	Xray string `json:"xray"`
-	Node string `json:"node"`
+	Xray     string `json:"xray"`
+	Node     string `json:"node"`
+	IsCustom bool   `json:"isCustom"`
+	NodeType string `json:"nodeType"`
 }
 
 type Service struct {
@@ -98,7 +100,10 @@ func (s *Service) CheckNodeHealth(node *database.Node) (bool, string) {
 	if s.client == nil {
 		return false, "node client not configured"
 	}
-	alive, msg, err := s.client.CheckHealth(node)
+	wasConnected := node.IsConnected
+	hr, err := s.client.CheckHealth(node)
+	alive := hr.IsAlive
+	msg := hr.StatusMsg
 	now := time.Now().UTC()
 	updates := map[string]interface{}{
 		"is_connected":        alive,
@@ -112,6 +117,54 @@ func (s *Service) CheckNodeHealth(node *database.Node) (bool, string) {
 		updates["last_status_message"] = &msg
 	}
 	s.db.Model(&database.Node{}).Where("uuid = ?", node.UUID).Updates(updates)
+	node.IsConnected = alive
+
+	metrics := s.GetNodeMetrics(node.UUID)
+	if metrics == nil {
+		metrics = &NodeHotMetrics{}
+	}
+	if !alive {
+		metrics.XrayUptime = 0
+		metrics.OnlineUsers = 0
+		s.SetNodeMetrics(node.UUID, metrics)
+		if !node.IsDisabled && err == nil {
+			go s.StartNode(node, false)
+		}
+	} else {
+		nodeVer := hr.NodeVersion
+		if nodeVer != "" {
+			if !strings.HasPrefix(nodeVer, "v") {
+				nodeVer = "v" + nodeVer
+			}
+			if hr.NodeType == "go" {
+				if !strings.Contains(nodeVer, "Go") {
+					nodeVer = nodeVer + " (Go)"
+				}
+			} else {
+				if !strings.Contains(nodeVer, "TS") {
+					nodeVer = nodeVer + " (TS)"
+				}
+			}
+		}
+		xrayVer := hr.XrayVersion
+		if xrayVer != "" && !strings.HasPrefix(xrayVer, "v") {
+			xrayVer = "v" + xrayVer
+		}
+		metrics.Versions = &NodeVersionsResponse{
+			Xray:     xrayVer,
+			Node:     nodeVer,
+			IsCustom: hr.IsCustomCore,
+			NodeType: hr.NodeType,
+		}
+		s.SetNodeMetrics(node.UUID, metrics)
+
+		// If node reconnected or Xray freshly started, ensure all users are synced
+		if !wasConnected || (metrics.XrayUptime > 0 && metrics.XrayUptime < 35) {
+			nodeCopy := *node
+			go s.SyncAllUsersToNode(&nodeCopy)
+		}
+	}
+
 	return alive, msg
 }
 
@@ -128,21 +181,44 @@ func (s *Service) StartNode(node *database.Node, force bool) (bool, error) {
 		}
 	}
 
+	tags := []string{}
+	if len(node.Tags) > 0 {
+		tags = []string(node.Tags)
+	}
+
 	payload := map[string]interface{}{
 		"xrayConfig": configMap,
 		"internals": map[string]interface{}{
 			"forceRestart": force,
 			"hashes": map[string]interface{}{
-				"configHash":   "hash",
-				"inboundsHash": "hash",
+				"emptyConfig": "hash",
+				"inbounds":    []map[string]interface{}{},
 			},
 			"metadata": map[string]interface{}{
 				"uuid":        node.UUID,
 				"name":        node.Name,
 				"countryCode": node.CountryCode,
 				"id":          node.ID,
+				"tags":        tags,
 			},
 		},
+	}
+
+	// Sync active plugin if configured
+	if node.ActivePluginUUID != nil && *node.ActivePluginUUID != "" {
+		var np database.NodePlugin
+		if err := s.db.Where("uuid = ?", *node.ActivePluginUUID).First(&np).Error; err == nil {
+			var pluginCfg map[string]interface{}
+			_ = json.Unmarshal([]byte(np.PluginConfig), &pluginCfg)
+			syncPayload := map[string]interface{}{
+				"plugin": map[string]interface{}{
+					"uuid":   np.UUID,
+					"name":   np.Name,
+					"config": pluginCfg,
+				},
+			}
+			_, _ = s.client.SyncPlugin(node, syncPayload)
+		}
 	}
 
 	ok, err := s.client.StartXray(node, payload)
@@ -158,6 +234,16 @@ func (s *Service) StartNode(node *database.Node, force bool) (bool, error) {
 		updates["last_status_message"] = nil
 	}
 	s.db.Model(&database.Node{}).Where("uuid = ?", node.UUID).Updates(updates)
+
+	if ok {
+		nodeCopy := *node
+		nodeCopy.IsConnected = true
+		go func(n database.Node) {
+			time.Sleep(1 * time.Second)
+			s.SyncAllUsersToNode(&n)
+		}(nodeCopy)
+	}
+
 	return ok, err
 }
 
@@ -169,6 +255,10 @@ func (s *Service) PollNodeStats(node *database.Node) {
 	metrics := s.GetNodeMetrics(node.UUID)
 	if metrics == nil {
 		metrics = &NodeHotMetrics{}
+	}
+
+	if metrics.Versions == nil {
+		go s.CheckNodeHealth(node)
 	}
 
 	// 1. Fetch system stats
@@ -216,6 +306,16 @@ func (s *Service) PollNodeStats(node *database.Node) {
 					last_connected_node_uuid = ?
 				WHERE id = ?
 			`, incTraffic, incTraffic, now, now, node.UUID, uid)
+
+			// Record user traffic on this node in nodes_user_usage_history
+			s.db.Exec(`
+				INSERT INTO nodes_user_usage_history (node_id, user_id, total_bytes, created_at, updated_at)
+				VALUES (?, ?, ?, CURRENT_DATE, NOW())
+				ON CONFLICT (node_id, created_at, user_id)
+				DO UPDATE SET
+					total_bytes = nodes_user_usage_history.total_bytes + EXCLUDED.total_bytes,
+					updated_at = EXCLUDED.updated_at
+			`, node.ID, uid, delta)
 		}
 
 		if len(usersTraffic) > 0 {
@@ -223,7 +323,56 @@ func (s *Service) PollNodeStats(node *database.Node) {
 		}
 	}
 
-	// 3. If online users is still 0, check active IP sessions for accuracy
+	// 3. Fetch combined stats (outbounds / inbounds) for node usage history
+	combinedStats, err := s.client.GetCombinedStats(node, true)
+	var nodeDownlink, nodeUplink int64
+	if err == nil && combinedStats != nil {
+		for _, ob := range combinedStats.Outbounds {
+			nodeDownlink += ob.Downlink
+			nodeUplink += ob.Uplink
+		}
+		// Fallback to inbounds if outbounds is 0
+		if nodeDownlink == 0 && nodeUplink == 0 {
+			for _, ib := range combinedStats.Inbounds {
+				nodeDownlink += ib.Downlink
+				nodeUplink += ib.Uplink
+			}
+		}
+	}
+	// Fallback to sum of users traffic deltas if combinedStats returned 0 or failed
+	if nodeDownlink == 0 && nodeUplink == 0 && len(usersTraffic) > 0 {
+		for _, ut := range usersTraffic {
+			if ut.Downlink > 0 || ut.Uplink > 0 {
+				nodeDownlink += ut.Downlink
+				nodeUplink += ut.Uplink
+			}
+		}
+	}
+
+	nodeTotal := nodeDownlink + nodeUplink
+	if nodeTotal > 0 {
+		// Record hourly node usage
+		s.db.Exec(`
+			INSERT INTO nodes_usage_history (node_uuid, download_bytes, upload_bytes, total_bytes, created_at, updated_at)
+			VALUES (?, ?, ?, ?, date_trunc('hour', NOW()), NOW())
+			ON CONFLICT (node_uuid, created_at)
+			DO UPDATE SET
+				download_bytes = nodes_usage_history.download_bytes + EXCLUDED.download_bytes,
+				upload_bytes = nodes_usage_history.upload_bytes + EXCLUDED.upload_bytes,
+				total_bytes = nodes_usage_history.total_bytes + EXCLUDED.total_bytes,
+				updated_at = EXCLUDED.updated_at
+		`, node.UUID, nodeDownlink, nodeUplink, nodeTotal)
+
+		// Increment node lifetime traffic with consumption multiplier
+		mult := NanoToMultiplier(node.ConsumptionMultiplier)
+		if mult <= 0 {
+			mult = 1.0
+		}
+		incNodeTraffic := int64(float64(nodeTotal) * mult)
+		s.db.Exec(`UPDATE nodes SET traffic_used_bytes = traffic_used_bytes + ? WHERE uuid = ?`, incNodeTraffic, node.UUID)
+	}
+
+	// 4. If online users is still 0, check active IP sessions for accuracy
 	if metrics.OnlineUsers == 0 {
 		sessions, err := s.client.GetUsersIpList(node)
 		if err == nil && len(sessions) > 0 {
@@ -396,8 +545,8 @@ func getVlessFlow(network, security, rawInbound string) string {
 		var raw map[string]interface{}
 		if err := json.Unmarshal([]byte(rawInbound), &raw); err == nil {
 			if settings, ok := raw["settings"].(map[string]interface{}); ok {
-				if f, ok := settings["flow"].(string); ok && f == "xtls-rprx-vision" {
-					return "xtls-rprx-vision"
+				if f, ok := settings["flow"].(string); ok {
+					return f
 				}
 			}
 		}
@@ -435,6 +584,110 @@ func (s *Service) GetUserResolvedInbounds(userID uint64) ([]InboundInfo, error) 
 	return inbounds, err
 }
 
+func (s *Service) syncUserToSingleNode(node *database.Node, user *database.User, prevVlessUUID *string, inbounds []InboundInfo) {
+	if s.client == nil || user == nil || node == nil {
+		return
+	}
+	isActive := strings.ToUpper(user.Status) == "ACTIVE"
+
+	var activeTags []string
+	s.db.Table("config_profile_inbounds_to_nodes").
+		Select("config_profile_inbounds.tag").
+		Joins("JOIN config_profile_inbounds ON config_profile_inbounds_to_nodes.config_profile_inbound_uuid = config_profile_inbounds.uuid").
+		Where("config_profile_inbounds_to_nodes.node_uuid = ?", node.UUID).
+		Pluck("tag", &activeTags)
+
+	tagSet := make(map[string]bool)
+	for _, t := range activeTags {
+		tagSet[t] = true
+	}
+
+	var matchedData []map[string]interface{}
+	if isActive {
+		for _, inb := range inbounds {
+			if !tagSet[inb.Tag] {
+				continue
+			}
+			inbType := inb.Type
+			if inbType == "shadowsocks" && isSS2022(inb.RawInbound) {
+				inbType = "shadowsocks22"
+			}
+			uID := strconv.FormatUint(user.ID, 10)
+			switch inbType {
+			case "vless":
+				flow := getVlessFlow(inb.Network, inb.Security, inb.RawInbound)
+				matchedData = append(matchedData, map[string]interface{}{
+					"type":     "vless",
+					"tag":      inb.Tag,
+					"username": uID,
+					"uuid":     user.VlessUUID,
+					"flow":     flow,
+				})
+			case "hysteria":
+				matchedData = append(matchedData, map[string]interface{}{
+					"type":     "hysteria",
+					"tag":      inb.Tag,
+					"username": uID,
+					"password": user.VlessUUID,
+				})
+			case "trojan":
+				matchedData = append(matchedData, map[string]interface{}{
+					"type":     "trojan",
+					"tag":      inb.Tag,
+					"username": uID,
+					"password": user.TrojanPassword,
+				})
+			case "shadowsocks", "shadowsocks22":
+				matchedData = append(matchedData, map[string]interface{}{
+					"type":     inbType,
+					"tag":      inb.Tag,
+					"username": uID,
+					"password": user.SsPassword,
+				})
+			}
+		}
+	}
+
+	if len(matchedData) > 0 {
+		req := AddUserRequestPayload{
+			HashData: NodeUserHashData{
+				VlessUUID:     user.VlessUUID,
+				PrevVlessUUID: prevVlessUUID,
+			},
+			Data: matchedData,
+		}
+		go func(n database.Node, r AddUserRequestPayload) {
+			_ = s.client.AddUser(&n, r)
+		}(*node, req)
+	} else {
+		req := RemoveUserRequestPayload{
+			Username: strconv.FormatUint(user.ID, 10),
+			HashData: NodeUserHashData{
+				VlessUUID: user.VlessUUID,
+			},
+		}
+		go func(n database.Node, r RemoveUserRequestPayload) {
+			_ = s.client.RemoveUser(&n, r)
+		}(*node, req)
+	}
+}
+
+func (s *Service) SyncAllUsersToNode(node *database.Node) {
+	if s.client == nil || node == nil {
+		return
+	}
+	var users []database.User
+	if err := s.db.Where("status = ?", "ACTIVE").Find(&users).Error; err != nil {
+		return
+	}
+	for i := range users {
+		inbounds, err := s.GetUserResolvedInbounds(users[i].ID)
+		if err == nil {
+			s.syncUserToSingleNode(node, &users[i], nil, inbounds)
+		}
+	}
+}
+
 func (s *Service) SyncUserToNodes(user *database.User, prevVlessUUID *string) {
 	if s.client == nil || user == nil {
 		return
@@ -450,89 +703,8 @@ func (s *Service) SyncUserToNodes(user *database.User, prevVlessUUID *string) {
 		return
 	}
 
-	isActive := strings.ToUpper(user.Status) == "ACTIVE"
-
 	for _, node := range connectedNodes {
-		var activeTags []string
-		s.db.Table("config_profile_inbounds_to_nodes").
-			Select("config_profile_inbounds.tag").
-			Joins("JOIN config_profile_inbounds ON config_profile_inbounds_to_nodes.config_profile_inbound_uuid = config_profile_inbounds.uuid").
-			Where("config_profile_inbounds_to_nodes.node_uuid = ?", node.UUID).
-			Pluck("tag", &activeTags)
-
-		tagSet := make(map[string]bool)
-		for _, t := range activeTags {
-			tagSet[t] = true
-		}
-
-		var matchedData []map[string]interface{}
-		if isActive {
-			for _, inb := range inbounds {
-				if !tagSet[inb.Tag] {
-					continue
-				}
-				inbType := inb.Type
-				if inbType == "shadowsocks" && isSS2022(inb.RawInbound) {
-					inbType = "shadowsocks22"
-				}
-				uID := strconv.FormatUint(user.ID, 10)
-				switch inbType {
-				case "vless":
-					flow := getVlessFlow(inb.Network, inb.Security, inb.RawInbound)
-					matchedData = append(matchedData, map[string]interface{}{
-						"type":     "vless",
-						"tag":      inb.Tag,
-						"username": uID,
-						"uuid":     user.VlessUUID,
-						"flow":     flow,
-					})
-				case "hysteria":
-					matchedData = append(matchedData, map[string]interface{}{
-						"type":     "hysteria",
-						"tag":      inb.Tag,
-						"username": uID,
-						"password": user.VlessUUID,
-					})
-				case "trojan":
-					matchedData = append(matchedData, map[string]interface{}{
-						"type":     "trojan",
-						"tag":      inb.Tag,
-						"username": uID,
-						"password": user.TrojanPassword,
-					})
-				case "shadowsocks", "shadowsocks22":
-					matchedData = append(matchedData, map[string]interface{}{
-						"type":     inbType,
-						"tag":      inb.Tag,
-						"username": uID,
-						"password": user.SsPassword,
-					})
-				}
-			}
-		}
-
-		if len(matchedData) > 0 {
-			req := AddUserRequestPayload{
-				HashData: NodeUserHashData{
-					VlessUUID:     user.VlessUUID,
-					PrevVlessUUID: prevVlessUUID,
-				},
-				Data: matchedData,
-			}
-			go func(n database.Node, r AddUserRequestPayload) {
-				_ = s.client.AddUser(&n, r)
-			}(node, req)
-		} else {
-			req := RemoveUserRequestPayload{
-				Username: strconv.FormatUint(user.ID, 10),
-				HashData: NodeUserHashData{
-					VlessUUID: user.VlessUUID,
-				},
-			}
-			go func(n database.Node, r RemoveUserRequestPayload) {
-				_ = s.client.RemoveUser(&n, r)
-			}(node, req)
-		}
+		s.syncUserToSingleNode(&node, user, prevVlessUUID, inbounds)
 	}
 }
 
