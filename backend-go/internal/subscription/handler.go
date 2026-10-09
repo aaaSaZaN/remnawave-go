@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,42 +37,79 @@ func (h *Handler) getHostsForUser(userID uint64) []database.Host {
 	}
 
 	var count int64
-	h.db.Table("internal_squad_members").Where("user_id = ?", userID).Count(&count)
+	if err := h.db.Table("internal_squad_members").Where("user_id = ?", userID).Count(&count).Error; err != nil {
+		log.Printf("[SUBSCRIPTION] failed to resolve squads for user id=%d: %v", userID, err)
+		return nil
+	}
 
 	var hosts []database.Host
-	if count > 0 {
-		query := `
-SELECT hosts.*
-FROM hosts
-WHERE EXISTS (
-    SELECT 1
-    FROM internal_squad_inbounds
-    INNER JOIN internal_squad_members
-        ON internal_squad_members.internal_squad_uuid = internal_squad_inbounds.internal_squad_uuid
-    WHERE internal_squad_inbounds.inbound_uuid = hosts.config_profile_inbound_uuid
-      AND internal_squad_members.user_id = ?
-      AND (
-          EXISTS (
-              SELECT 1
-              FROM internal_squad_host_links
-              WHERE internal_squad_host_links.host_uuid = hosts.uuid
-                AND internal_squad_host_links.squad_uuid = internal_squad_inbounds.internal_squad_uuid
-          ) = (hosts.internal_squads_mode = 'ALLOW_ONLY')
-      )
-)
-AND hosts.is_disabled = false
-AND hosts.is_hidden = false
-ORDER BY hosts.view_position ASC;
-`
-		if err := h.db.Raw(query, userID).Scan(&hosts).Error; err == nil {
-			return hosts
+	if count == 0 {
+		if err := h.db.Where("is_disabled = ? AND is_hidden = ?", false, false).
+			Order("view_position ASC").Find(&hosts).Error; err != nil {
+			log.Printf("[SUBSCRIPTION] failed to load hosts for user id=%d: %v", userID, err)
+			return nil
+		}
+		return hosts
+	}
+
+	type squadInbound struct {
+		SquadUUID   string `gorm:"column:internal_squad_uuid"`
+		InboundUUID string `gorm:"column:inbound_uuid"`
+	}
+	var squadInbounds []squadInbound
+	if err := h.db.Table("internal_squad_inbounds").
+		Select("internal_squad_inbounds.internal_squad_uuid, internal_squad_inbounds.inbound_uuid").
+		Joins("JOIN internal_squad_members ON internal_squad_members.internal_squad_uuid = internal_squad_inbounds.internal_squad_uuid").
+		Where("internal_squad_members.user_id = ?", userID).
+		Scan(&squadInbounds).Error; err != nil {
+		log.Printf("[SUBSCRIPTION] failed to resolve inbound access for user id=%d: %v", userID, err)
+		return nil
+	}
+
+	squadsByInbound := make(map[string][]string)
+	for _, link := range squadInbounds {
+		squadsByInbound[link.InboundUUID] = append(squadsByInbound[link.InboundUUID], link.SquadUUID)
+	}
+	if len(squadsByInbound) == 0 {
+		return []database.Host{}
+	}
+
+	if err := h.db.Where("is_disabled = ? AND is_hidden = ?", false, false).
+		Order("view_position ASC").Find(&hosts).Error; err != nil {
+		log.Printf("[SUBSCRIPTION] failed to load hosts for user id=%d: %v", userID, err)
+		return nil
+	}
+
+	availableHosts := make([]database.Host, 0, len(hosts))
+	for _, host := range hosts {
+		userSquads := squadsByInbound[host.ConfigProfileInboundUUID]
+		if len(userSquads) == 0 {
+			continue
+		}
+
+		var selectedSquadUUIDs []string
+		if raw := strings.TrimSpace(host.InternalSquads); raw != "" && raw != "null" {
+			if err := json.Unmarshal([]byte(raw), &selectedSquadUUIDs); err != nil {
+				log.Printf("[SUBSCRIPTION] invalid internal squad list for host uuid=%s: %v", host.UUID, err)
+				continue
+			}
+		}
+		selectedSquads := make(map[string]struct{}, len(selectedSquadUUIDs))
+		for _, squadUUID := range selectedSquadUUIDs {
+			selectedSquads[squadUUID] = struct{}{}
+		}
+
+		allowOnly := strings.EqualFold(strings.TrimSpace(host.InternalSquadsMode), "ALLOW_ONLY")
+		for _, squadUUID := range userSquads {
+			_, isSelected := selectedSquads[squadUUID]
+			if (allowOnly && isSelected) || (!allowOnly && !isSelected) {
+				availableHosts = append(availableHosts, host)
+				break
+			}
 		}
 	}
 
-	h.db.Where("is_disabled = ? AND is_hidden = ?", false, false).
-		Order("view_position ASC").
-		Find(&hosts)
-	return hosts
+	return availableHosts
 }
 
 func (h *Handler) getHostsWithInboundsForUser(userID uint64) []XrayHostMeta {
