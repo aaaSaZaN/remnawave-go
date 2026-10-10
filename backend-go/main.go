@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
-	"strings"
 	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -52,8 +52,14 @@ func ensureGlobalSymlink() {
 }
 
 func main() {
-	ensureGlobalSymlink()
 	cfg := config.Load()
+	args := os.Args[1:]
+	if cli.IsPostgresToSQLiteMigrationCommand(args) {
+		cli.RunRescue(nil, cfg, args)
+		return
+	}
+
+	ensureGlobalSymlink()
 
 	db, err := database.Init(cfg.DBDriver, cfg.DatabaseURL)
 	if err != nil {
@@ -93,6 +99,7 @@ func main() {
 	}
 	nodeService := nodes.NewService(db, nodeClient)
 	userService.SetSyncer(nodeService)
+	scheduler.SetSyncer(nodeService)
 	if nodeClient != nil {
 		go nodeService.StartHealthCheckLoop(cronCtx)
 		go nodeService.SyncAllUsersToConnectedNodes()
@@ -133,9 +140,11 @@ func main() {
 	r.Get("/api/sub/{shortUuid}/{clientType}", subHandler.GetSubscription)
 
 	r.Group(func(protected chi.Router) {
-		protected.Use(middleware.Auth(cfg.AppSecret))
+		protected.Use(middleware.Auth(cfg.AppSecret, db))
 
 		protected.Get("/api/system/metadata", sysHandler.GetMetadata)
+		protected.Get("/api/system/updates/check", sysHandler.CheckUpdate)
+		protected.Post("/api/system/updates/apply", sysHandler.ApplyUpdate)
 		protected.Get("/api/tokens", tokensHandler.GetApiTokens)
 		protected.Post("/api/tokens", tokensHandler.CreateApiToken)
 		protected.Delete("/api/tokens/{uuid}", tokensHandler.DeleteApiToken)

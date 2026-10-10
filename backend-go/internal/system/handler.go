@@ -17,6 +17,11 @@ import (
 	"gorm.io/gorm"
 )
 
+var (
+	AppVersion = "v1.0.5"
+	BuildTime  = "unknown"
+	BuildNum   = "1"
+)
 var startTime = time.Now()
 
 type Handler struct {
@@ -220,14 +225,10 @@ func calcBaseStat(cur, prev int64) BaseStat {
 func (h *Handler) GetMetadata(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	var resp MetadataResponse
-	resp.Response.Version = "3.4.15"
-	resp.Response.Build.Time = "2026-10-03T20:00:00Z"
-	resp.Response.Build.Number = "1"
-	resp.Response.Git.Backend.CommitSha = "339fc6c"
+	resp.Response.Version = AppVersion
+	resp.Response.Build.Time = BuildTime
+	resp.Response.Build.Number = BuildNum
 	resp.Response.Git.Backend.Branch = "main"
-	resp.Response.Git.Backend.CommitURL = "https://github.com/remnawave/backend"
-	resp.Response.Git.Frontend.CommitSha = "339fc6c"
-	resp.Response.Git.Frontend.CommitURL = "https://github.com/remnawave/frontend"
 
 	json.NewEncoder(w).Encode(resp)
 }
@@ -604,7 +605,7 @@ func (h *Handler) GetRecap(w http.ResponseWriter, r *http.Request) {
 	resp.Response.Total.NodesRam = "0 B"
 	resp.Response.Total.NodesCpuCores = 0
 	resp.Response.Total.DistinctCountries = int(distinctCountries)
-	resp.Response.Version = "3.4.15"
+	resp.Response.Version = AppVersion
 	resp.Response.InitDate = initDate.UTC().Format(time.RFC3339)
 
 	json.NewEncoder(w).Encode(resp)

@@ -9,12 +9,26 @@ import (
 	"gorm.io/gorm"
 )
 
-type Scheduler struct {
-	db *gorm.DB
+type UserSyncer interface {
+	SyncUserToNodes(user *database.User, prevVlessUUID *string)
+	RemoveUserFromNodes(user *database.User)
 }
 
-func New(db *gorm.DB) *Scheduler {
-	return &Scheduler{db: db}
+type Scheduler struct {
+	db     *gorm.DB
+	syncer UserSyncer
+}
+
+func New(db *gorm.DB, syncer ...UserSyncer) *Scheduler {
+	var s UserSyncer
+	if len(syncer) > 0 {
+		s = syncer[0]
+	}
+	return &Scheduler{db: db, syncer: s}
+}
+
+func (s *Scheduler) SetSyncer(syncer UserSyncer) {
+	s.syncer = syncer
 }
 
 func (s *Scheduler) Start(ctx context.Context) {
@@ -34,20 +48,44 @@ func (s *Scheduler) Start(ctx context.Context) {
 
 func (s *Scheduler) checkExpiredUsers() {
 	now := time.Now()
-	s.db.Model(&database.User{}).
-		Where("status = ? AND expire_at <= ?", "ACTIVE", now).
-		Update("status", "EXPIRED")
+	var expiredUsers []database.User
+	if err := s.db.Where("status = ? AND expire_at <= ?", "ACTIVE", now).Find(&expiredUsers).Error; err != nil {
+		return
+	}
+	if len(expiredUsers) == 0 {
+		return
+	}
+
+	var ids []uint64
+	for _, u := range expiredUsers {
+		ids = append(ids, u.ID)
+	}
+	s.db.Model(&database.User{}).Where("id IN ?", ids).Update("status", "EXPIRED")
+
+	if s.syncer != nil {
+		for i := range expiredUsers {
+			expiredUsers[i].Status = "EXPIRED"
+			s.syncer.SyncUserToNodes(&expiredUsers[i], nil)
+		}
+	}
 }
 
 func (s *Scheduler) checkTrafficLimits() {
 	var users []database.User
-	s.db.Preload("Traffic").
+	if err := s.db.Preload("Traffic").
 		Where("status = ? AND traffic_limit_bytes > 0", "ACTIVE").
-		Find(&users)
+		Find(&users).Error; err != nil {
+		return
+	}
 
-	for _, u := range users {
+	for i := range users {
+		u := &users[i]
 		if u.Traffic != nil && u.Traffic.UsedTrafficBytes >= u.TrafficLimitBytes {
 			s.db.Model(&database.User{}).Where("id = ?", u.ID).Update("status", "LIMITED")
+			if s.syncer != nil {
+				u.Status = "LIMITED"
+				s.syncer.SyncUserToNodes(u, nil)
+			}
 		}
 	}
 }

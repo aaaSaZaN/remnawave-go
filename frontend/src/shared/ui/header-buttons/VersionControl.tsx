@@ -24,7 +24,7 @@ export function VersionControl() {
 
         const currentVersion = remnawaveMetadata.version
         const latest = remnawaveInfo.latestVersion || '0.0.0'
-        return [semver.gt(latest, currentVersion), remnawaveMetadata.git.backend.branch !== 'main']
+        return [semver.gt(latest, currentVersion), remnawaveMetadata.git?.backend?.branch !== 'main']
     }, [remnawaveInfo.latestVersion, remnawaveMetadata])
 
     if (isLoading || !remnawaveMetadata) {

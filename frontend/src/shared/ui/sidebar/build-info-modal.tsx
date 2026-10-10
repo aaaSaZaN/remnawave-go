@@ -13,6 +13,7 @@ import {
     Tooltip
 } from '@mantine/core'
 import { GetMetadataCommand } from '@remnawave/backend-contract'
+import { useState } from 'react'
 import {
     TbBrandGithub,
     TbBrandTelegram,
@@ -21,11 +22,11 @@ import {
     TbCopy,
     TbGitBranch,
     TbHash,
-    TbServer,
-    TbWorld
+    TbDownload
 } from 'react-icons/tb'
 
 import { formatTimeUtil } from '@shared/utils/time-utils'
+import { instance } from '@shared/api'
 
 import { CopyableCodeBlock } from '../copyable-code-block'
 import { Logo } from '../logo'
@@ -37,6 +38,20 @@ interface BuildInfoModalProps {
 }
 
 export function BuildInfoModal({ remnawaveMetadata, isNewVersionAvailable }: BuildInfoModalProps) {
+    const [isUpdating, setIsUpdating] = useState(false)
+
+    const handleUpdate = async () => {
+        setIsUpdating(true)
+        try {
+            await instance.post('/api/system/updates/apply')
+            setTimeout(() => {
+                window.location.reload()
+            }, 5000)
+        } catch {
+            setIsUpdating(false)
+        }
+    }
+
     return (
         <Stack gap="md">
             {isNewVersionAvailable && (
@@ -58,16 +73,16 @@ export function BuildInfoModal({ remnawaveMetadata, isNewVersionAvailable }: Bui
 
                         <Button
                             color="teal"
-                            component="a"
-                            href="https://t.me/remnalog"
-                            leftSection={<TbBrandTelegram size={14} />}
+                            leftSection={<TbDownload size={14} />}
                             ml="auto"
                             radius="md"
                             size="xs"
                             target="_blank"
                             variant="light"
+                            loading={isUpdating}
+                            onClick={handleUpdate}
                         >
-                            Check out
+                            Update panel
                         </Button>
                     </Group>
                 </Paper>
@@ -88,13 +103,13 @@ export function BuildInfoModal({ remnawaveMetadata, isNewVersionAvailable }: Bui
 
                             <Badge
                                 color={
-                                    remnawaveMetadata.git.backend.branch === 'dev' ? 'red' : 'teal'
+                                    remnawaveMetadata.git?.backend?.branch === 'dev' ? 'red' : 'teal'
                                 }
                                 leftSection={<TbGitBranch size={16} />}
                                 size="lg"
                                 variant="light"
                             >
-                                {remnawaveMetadata.git.backend.branch}
+                                {remnawaveMetadata.git?.backend?.branch || 'main'}
                             </Badge>
                         </Group>
                         <CopyButton
@@ -149,68 +164,6 @@ export function BuildInfoModal({ remnawaveMetadata, isNewVersionAvailable }: Bui
                 </Stack>
             </Paper>
 
-            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
-                <Paper className={classes.backendCard} p="md" radius="md">
-                    <Stack gap="sm">
-                        <Group gap="xs" justify="space-between">
-                            <Group gap="xs">
-                                <TbServer color="var(--mantine-color-teal-5)" size={16} />
-                                <Text c="teal.5" fw={600} size="sm">
-                                    Backend
-                                </Text>
-                            </Group>
-                            <Tooltip label="View on GitHub">
-                                <ActionIcon
-                                    color="teal"
-                                    component="a"
-                                    href={remnawaveMetadata.git.backend.commitUrl}
-                                    size="sm"
-                                    target="_blank"
-                                    variant="subtle"
-                                >
-                                    <TbBrandGithub size={14} />
-                                </ActionIcon>
-                            </Tooltip>
-                        </Group>
-
-                        <CopyableCodeBlock
-                            size="small"
-                            value={remnawaveMetadata.git.backend.commitSha}
-                        />
-                    </Stack>
-                </Paper>
-
-                <Paper className={classes.frontendCard} p="md" radius="md">
-                    <Stack gap="sm">
-                        <Group gap="xs" justify="space-between">
-                            <Group gap="xs">
-                                <TbWorld color="var(--mantine-color-cyan-5)" size={16} />
-                                <Text c="cyan.5" fw={600} size="sm">
-                                    Frontend
-                                </Text>
-                            </Group>
-                            <Tooltip label="View on GitHub">
-                                <ActionIcon
-                                    color="cyan"
-                                    component="a"
-                                    href={remnawaveMetadata.git.frontend.commitUrl}
-                                    size="sm"
-                                    target="_blank"
-                                    variant="subtle"
-                                >
-                                    <TbBrandGithub size={14} />
-                                </ActionIcon>
-                            </Tooltip>
-                        </Group>
-
-                        <CopyableCodeBlock
-                            size="small"
-                            value={remnawaveMetadata.git.frontend.commitSha}
-                        />
-                    </Stack>
-                </Paper>
-            </SimpleGrid>
-
             <Group gap="sm" grow>
                 <Button
                     color="cyan"
@@ -226,7 +179,7 @@ export function BuildInfoModal({ remnawaveMetadata, isNewVersionAvailable }: Bui
                 </Button>
                 <Button
                     component="a"
-                    href="https://github.com/remnawave"
+                    href="https://github.com/aaaSaZaN/remnawave-go"
                     leftSection={<TbBrandGithub size={16} />}
                     radius="md"
                     size="sm"
